@@ -9,8 +9,8 @@ Base = declarative_base()
 
 
 class Strain(Base):
-    """Strain model matching cannamente structure with vector representation"""
-    __tablename__ = "strains"
+    """Strain model matching cannamente Django structure with vector representation"""
+    __tablename__ = "strains_strain"  # Django table name
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, index=True)

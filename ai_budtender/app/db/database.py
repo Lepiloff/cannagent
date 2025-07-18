@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.config import settings
@@ -29,7 +29,16 @@ def check_db_connection():
     """Проверка подключения к базе данных"""
     try:
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
-        return True
-    except Exception:
+            # Проверяем подключение и наличие таблиц
+            result = conn.execute(text("SELECT 1"))
+            result.fetchone()
+            
+            # Дополнительно проверяем наличие таблицы strains_strain
+            result = conn.execute(text("SELECT COUNT(*) FROM strains_strain"))
+            count = result.fetchone()[0]
+            print(f"Database connection OK. Found {count} strains in database.")
+            
+            return True
+    except Exception as e:
+        print(f"Database connection error: {e}")
         return False 

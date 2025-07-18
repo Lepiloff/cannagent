@@ -1,7 +1,7 @@
 from typing import List, Optional
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain.schema import BaseRetriever, Document
+from langchain.schema import Document
 from langchain_openai import ChatOpenAI
 from app.core.llm_interface import get_llm
 from app.db.repository import ProductRepository
@@ -9,46 +9,11 @@ from app.models.schemas import Product, ChatResponse
 from app.config import settings
 
 
-class ProductRetriever(BaseRetriever):
-    """Кастомный ретривер для поиска товаров через pgvector"""
-    
-    def __init__(self, repository: ProductRepository):
-        self.repository = repository
-        self.llm = get_llm()
-    
-    def _get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
-        """Поиск релевантных документов"""
-        # Генерируем эмбеддинг для запроса
-        query_embedding = self.llm.generate_embedding(query)
-        
-        # Ищем похожие товары
-        similar_products = self.repository.search_similar_products(
-            query_embedding, 
-            limit=settings.search_limit
-        )
-        
-        # Конвертируем в Document объекты для LangChain
-        documents = []
-        for product in similar_products:
-            doc = Document(
-                page_content=f"Товар: {product.name}\nОписание: {product.description}",
-                metadata={"product_id": product.id, "name": product.name}
-            )
-            documents.append(doc)
-        
-        return documents
-    
-    async def aget_relevant_documents(self, query: str, **kwargs) -> List[Document]:
-        """Асинхронная версия поиска"""
-        return self._get_relevant_documents(query, **kwargs)
-
-
 class RAGService:
     """Сервис для RAG (Retrieval-Augmented Generation)"""
     
     def __init__(self, repository: ProductRepository):
         self.repository = repository
-        self.retriever = ProductRetriever(repository)
         self.llm_interface = get_llm()
         
         # Create prompt template for AI Budtender
@@ -77,11 +42,33 @@ If no suitable products are found, offer general recommendations.
 """
         )
     
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        """Поиск релевантных документов"""
+        # Генерируем эмбеддинг для запроса
+        query_embedding = self.llm_interface.generate_embedding(query)
+        
+        # Ищем похожие товары
+        similar_products = self.repository.search_similar_products(
+            query_embedding, 
+            limit=settings.search_limit
+        )
+        
+        # Конвертируем в Document объекты для LangChain
+        documents = []
+        for product in similar_products:
+            doc = Document(
+                page_content=f"Товар: {product.name}\nОписание: {product.description}",
+                metadata={"product_id": product.id, "name": product.name}
+            )
+            documents.append(doc)
+        
+        return documents
+    
     def process_query(self, query: str, history: Optional[List[str]] = None) -> ChatResponse:
         """Обработка запроса пользователя с помощью RAG"""
         
         # Получаем релевантные документы
-        relevant_docs = self.retriever._get_relevant_documents(query)
+        relevant_docs = self._get_relevant_documents(query)
         
         # Формируем контекст из найденных товаров
         context = "\n".join([doc.page_content for doc in relevant_docs])

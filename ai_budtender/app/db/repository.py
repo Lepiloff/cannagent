@@ -12,7 +12,7 @@ class ProductRepository:
     def __init__(self, db: Session):
         self.db = db
     
-    def create_product(self, product: ProductCreate, embedding: List[float]) -> ProductModel:
+    def create_product(self, product: ProductCreate, embedding: Optional[List[float]] = None) -> ProductModel:
         """Создание нового товара с эмбеддингом"""
         db_product = ProductModel(
             name=product.name,

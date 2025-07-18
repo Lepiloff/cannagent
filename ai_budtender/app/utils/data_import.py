@@ -27,7 +27,7 @@ def import_products_from_csv(csv_path: str) -> int:
                 )
                 
                 # Создаем товар без эмбеддинга
-                created_product = repository.create_product(product, [])
+                created_product = repository.create_product(product, None)
                 
                 # Генерируем эмбеддинг
                 rag_service.add_product_embeddings(created_product.id)
@@ -62,7 +62,7 @@ def import_products_from_json(json_path: str) -> int:
                 )
                 
                 # Создаем товар без эмбеддинга
-                created_product = repository.create_product(product, [])
+                created_product = repository.create_product(product, None)
                 
                 # Генерируем эмбеддинг
                 rag_service.add_product_embeddings(created_product.id)
@@ -139,7 +139,7 @@ def initialize_sample_data():
             )
             
             # Создаем товар без эмбеддинга
-            created_product = repository.create_product(product, [])
+            created_product = repository.create_product(product, None)
             
             # Генерируем эмбеддинг
             rag_service.add_product_embeddings(created_product.id)

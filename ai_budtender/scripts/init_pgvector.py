@@ -61,56 +61,64 @@ def init_pgvector():
             print("❌ Failed to install pgvector extension")
             return False
         
-        # Check if strains table exists (from cannamente)
-        print("Checking strains table...")
+        # Check if strains_strain table exists (Django table from cannamente)
+        print("Checking strains_strain table...")
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
-                AND table_name = 'strains'
+                AND table_name = 'strains_strain'
             )
         """)
         strains_table_exists = cursor.fetchone()[0]
         
         if strains_table_exists:
-            print("✅ strains table exists (from cannamente)")
+            print("✅ strains_strain table exists (from cannamente Django)")
             
             # Count strains
-            cursor.execute("SELECT COUNT(*) FROM strains")
+            cursor.execute("SELECT COUNT(*) FROM strains_strain")
             count = cursor.fetchone()[0]
             print(f"   Strains count: {count}")
             
-            # Check if strains table has embedding column
+            # Check if strains_strain table has embedding column
             cursor.execute("""
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name = 'strains' 
+                WHERE table_name = 'strains_strain' 
                 AND column_name = 'embedding'
             """)
             embedding_col = cursor.fetchone()
             
             if embedding_col:
-                print("✅ strains table has embedding column")
+                print("✅ strains_strain table has embedding column")
             else:
-                print("Adding embedding column to strains table...")
+                print("Adding embedding column to strains_strain table...")
                 cursor.execute("""
-                    ALTER TABLE strains 
+                    ALTER TABLE strains_strain 
                     ADD COLUMN embedding vector(1536);
                 """)
-                print("✅ Added embedding column to strains table")
+                print("✅ Added embedding column to strains_strain table")
             
-            # Create index for vector search on strains
-            print("Creating vector search index on strains...")
+            # Create index for vector search on strains_strain
+            print("Creating vector search index on strains_strain...")
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS strains_embedding_idx 
-                ON strains 
+                CREATE INDEX IF NOT EXISTS strains_strain_embedding_idx 
+                ON strains_strain 
                 USING ivfflat (embedding vector_cosine_ops)
                 WITH (lists = 100);
             """)
-            print("✅ Created vector search index on strains")
+            print("✅ Created vector search index on strains_strain")
+            
+            # Show sample strains
+            if count > 0:
+                cursor.execute("SELECT name, category, thc, cbd FROM strains_strain LIMIT 3")
+                sample_strains = cursor.fetchall()
+                print("   Sample strains:")
+                for strain in sample_strains:
+                    print(f"     - {strain[0]} ({strain[1]}) - THC: {strain[2]}%, CBD: {strain[3]}%")
             
         else:
-            print("❌ strains table does not exist")
+            print("❌ strains_strain table does not exist")
             print("   Make sure cannamente project is properly initialized")
             return False
         

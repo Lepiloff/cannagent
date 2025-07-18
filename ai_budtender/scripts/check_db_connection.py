@@ -53,48 +53,48 @@ def check_db_connection():
             print("❌ pgvector extension is NOT installed")
             print("   Run: make init-pgvector")
         
-        # Check strains table (from cannamente)
+        # Check strains_strain table (Django table from cannamente)
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
-                AND table_name = 'strains'
+                AND table_name = 'strains_strain'
             )
         """)
         strains_table_exists = cursor.fetchone()[0]
         
         if strains_table_exists:
-            print("✅ strains table exists (from cannamente)")
+            print("✅ strains_strain table exists (from cannamente Django)")
             
             # Count strains
-            cursor.execute("SELECT COUNT(*) FROM strains")
+            cursor.execute("SELECT COUNT(*) FROM strains_strain")
             count = cursor.fetchone()[0]
             print(f"   Strains count: {count}")
             
-            # Check if strains table has embedding column
+            # Check if strains_strain table has embedding column
             cursor.execute("""
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name = 'strains' 
+                WHERE table_name = 'strains_strain' 
                 AND column_name = 'embedding'
             """)
             embedding_col = cursor.fetchone()
             
             if embedding_col:
-                print("✅ strains table has embedding column")
+                print("✅ strains_strain table has embedding column")
             else:
-                print("❌ strains table missing embedding column")
+                print("❌ strains_strain table missing embedding column")
                 print("   Run: make init-pgvector")
             
             # Show sample strains
             if count > 0:
-                cursor.execute("SELECT name, category, thc, cbd FROM strains LIMIT 3")
+                cursor.execute("SELECT name, category, thc, cbd FROM strains_strain LIMIT 3")
                 sample_strains = cursor.fetchall()
                 print("   Sample strains:")
                 for strain in sample_strains:
                     print(f"     - {strain[0]} ({strain[1]}) - THC: {strain[2]}%, CBD: {strain[3]}%")
         else:
-            print("❌ strains table does not exist")
+            print("❌ strains_strain table does not exist")
             print("   Make sure cannamente project is properly initialized")
         
         # Check legacy products table

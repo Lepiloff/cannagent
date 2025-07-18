@@ -113,70 +113,221 @@ To avoid conflicts with the cannamente project, the following ports have been ch
 | Metrics | 9090 | 9091 | Avoid potential conflicts |
 | Redis | 6379 | 6380 | Avoid potential conflicts |
 
-## API Usage
+## Daily Usage Commands
 
-### Main Endpoints
+### Starting the Project
 
-#### 1. Health Check
 ```bash
-GET /api/v1/ping/
+# Start all services (recommended)
+make start
+
+# Start with logs
+docker-compose up
+
+# Start in background
+docker-compose up -d
 ```
 
-#### 2. Get Products
+### Stopping the Project
+
 ```bash
-GET /api/v1/products/
+# Stop all services
+make stop
+
+# Or
+docker-compose down
 ```
 
-#### 3. Create Product
-```bash
-POST /api/v1/products/
-Content-Type: application/json
+### Checking Status
 
+```bash
+# Show service status
+make status
+
+# Show logs
+make logs
+
+# Check database connection
+make check-db
+```
+
+### Development Commands
+
+```bash
+# Open shell in API container
+make shell
+
+# Open Redis CLI
+make redis-cli
+
+# Run tests
+make test
+
+# Restart services
+make restart
+```
+
+### Maintenance Commands
+
+```bash
+# Clean up containers and volumes
+make clean
+
+# Build Docker images
+make build
+
+# Initialize pgvector in external database
+make init-pgvector
+
+# Create new database migration
+make migration MSG="description"
+```
+
+## API Usage Examples
+
+### 1. Health Check
+
+```bash
+# Basic health check
+curl -s http://localhost:8001/api/v1/ping/ | python3 -m json.tool
+
+# Expected response:
 {
-  "name": "Blue Dream",
-  "description": "Sativa-Indica hybrid for daytime use"
+    "status": "ok",
+    "database": "ok", 
+    "redis": "connected",
+    "timestamp": "2025-07-18T18:35:16.905091"
 }
 ```
 
-#### 4. Chat with AI Budtender
-```bash
-POST /api/v1/chat/ask/
-Content-Type: application/json
+### 2. Get All Products
 
+```bash
+# Get all products
+curl -s http://localhost:8001/api/v1/products/ | python3 -m json.tool
+
+# Expected response:
 {
-  "message": "Recommend something for evening relaxation",
-  "history": []
+    "products": [
+        {
+            "id": 1,
+            "name": "Blue Dream",
+            "description": "Sativa-Indica hybrid for daytime use",
+            "created_at": "2024-01-01T12:00:00Z"
+        }
+    ]
 }
 ```
 
-#### 5. Cache Management
+### 3. Create New Product
+
+```bash
+# Create a new product
+curl -X POST http://localhost:8001/api/v1/products/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Northern Lights",
+    "description": "Classic indica strain for evening relaxation"
+  }' | python3 -m json.tool
+
+# Expected response:
+{
+    "id": 2,
+    "name": "Northern Lights", 
+    "description": "Classic indica strain for evening relaxation",
+    "created_at": "2024-01-01T12:00:00Z"
+}
+```
+
+### 4. Chat with AI Budtender
+
+```bash
+# Ask for recommendations
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I need something for evening relaxation",
+    "history": []
+  }' | python3 -m json.tool
+
+# Expected response:
+{
+    "response": "For evening relaxation, I recommend Northern Lights...",
+    "recommended_products": [
+        {
+            "id": 2,
+            "name": "Northern Lights",
+            "description": "Classic indica strain for evening relaxation",
+            "created_at": "2024-01-01T12:00:00Z"
+        }
+    ]
+}
+```
+
+### 5. Cache Management
+
 ```bash
 # Get cache statistics
-GET /api/v1/cache/stats/
+curl -s http://localhost:8001/api/v1/cache/stats/ | python3 -m json.tool
 
 # Clear cache
-POST /api/v1/cache/clear/
+curl -X POST http://localhost:8001/api/v1/cache/clear/ | python3 -m json.tool
 ```
 
-#### 6. Metrics
+### 6. Metrics
+
 ```bash
-GET /metrics
+# Get Prometheus metrics
+curl -s http://localhost:8001/metrics
 ```
 
-### Chat Response Example
+### 7. API Documentation
 
-```json
-{
-  "response": "For evening relaxation I recommend...",
-  "recommended_products": [
-    {
-      "id": 1,
-      "name": "Northern Lights",
-      "description": "Classic indica for relaxation",
-      "created_at": "2024-01-01T12:00:00Z"
-    }
-  ]
-}
+```bash
+# Open in browser
+open http://localhost:8001/api/v1/docs
+```
+
+## Complete Makefile Commands
+
+```bash
+# Help - show all available commands
+make help
+
+# Build and start services
+make build
+make start
+
+# Stop and restart
+make stop
+make restart
+
+# Monitoring and logs
+make logs
+make status
+
+# Database operations
+make init-pgvector
+make check-db
+make migration MSG="add new field"
+
+# Development
+make test
+make shell
+make redis-cli
+
+# Maintenance
+make clean
+make install
+make dev
+
+# Code quality
+make format
+make lint
+make security
+
+# Dependencies
+make freeze
 ```
 
 ## Architecture
@@ -220,45 +371,38 @@ ai_budtender/
 └── requirements.txt        # Dependencies
 ```
 
-## Algorithm Flow
+## How It Works
 
-1. **Request Reception**: User sends question through API
-2. **Embedding Generation**: Creates vector representation of query  
-3. **Vector Search**: Searches for similar products via pgvector
-4. **Context Formation**: Prepares data for LLM
-5. **Response Generation**: LLM creates personalized answer
-6. **Result Return**: Response and recommendations sent to user
+### 1. Request Flow
 
-## Development Commands
+1. **User sends question** via `/api/v1/chat/ask/` endpoint
+2. **System generates embedding** for the user's question using OpenAI or mock mode
+3. **Vector search** finds similar products in the database using pgvector
+4. **Context preparation** combines user question with relevant product data
+5. **LLM processing** generates personalized response using OpenAI or mock LLM
+6. **Response formatting** includes both text response and recommended products
+7. **Caching** stores embeddings and responses in Redis for future use
 
-```bash
-# Start all services
-make start
+### 2. Vector Search Process
 
-# Stop all services  
-make stop
+- Uses pgvector extension for semantic similarity search
+- Searches through product descriptions and names
+- Returns top-k most similar products
+- Combines with traditional keyword search for better results
 
-# Show logs
-make logs
+### 3. Caching Strategy
 
-# Initialize pgvector in external database
-make init-pgvector
+- **Embedding cache**: Stores generated embeddings to avoid re-computation
+- **Response cache**: Caches AI responses for identical queries
+- **Product cache**: Caches frequently accessed product data
+- **TTL-based expiration**: Automatic cleanup of old cache entries
 
-# Check database connection
-make check-db
+### 4. Rate Limiting
 
-# Show service status
-make status
-
-# Run tests
-make test
-
-# Open shell in API container
-make shell
-
-# Clean up
-make clean
-```
+- **API endpoints**: 100 requests per minute per IP
+- **Health endpoints**: 10 requests per minute
+- **Cache operations**: 5 requests per minute
+- **Configurable limits** via environment variables
 
 ## Troubleshooting
 
@@ -280,6 +424,12 @@ make clean
    make init-pgvector
    ```
 
+4. **Check database logs**:
+   ```bash
+   # In cannamente directory
+   docker-compose logs postgres
+   ```
+
 ### Port Conflicts
 
 If you encounter port conflicts:
@@ -287,6 +437,25 @@ If you encounter port conflicts:
 1. Check if cannamente is using the same ports
 2. Modify ports in `docker-compose.yml` if needed
 3. Restart services: `make restart`
+
+### Service Won't Start
+
+1. **Check logs**:
+   ```bash
+   make logs
+   ```
+
+2. **Verify environment**:
+   ```bash
+   cat .env
+   ```
+
+3. **Rebuild containers**:
+   ```bash
+   make clean
+   make build
+   make start
+   ```
 
 ### pgvector Installation
 
@@ -299,6 +468,26 @@ If pgvector is not available in your PostgreSQL:
 
 2. **For Docker**: Use `pgvector/pgvector:pg15` image in cannamente
 
+3. **Manual installation**:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+
+### Linux Docker Hostname Issues
+
+If you're on Linux and get hostname resolution errors:
+
+1. **Update docker-compose.yml** to use `host-gateway`:
+   ```yaml
+   extra_hosts:
+     - "host.docker.internal:host-gateway"
+   ```
+
+2. **Or use host network**:
+   ```yaml
+   network_mode: host
+   ```
+
 ## Integration with Cannamente
 
 This project is designed to work alongside the **cannamente** project:
@@ -308,6 +497,13 @@ This project is designed to work alongside the **cannamente** project:
 - **Port Isolation**: Different ports to avoid conflicts
 - **Data Sharing**: Products can be shared between projects
 
+### Data Flow
+
+1. **Cannamente** manages the main cannabis strain database
+2. **AI Budtender** reads from the same database
+3. **pgvector** enables semantic search across strain descriptions
+4. **AI responses** are generated based on the shared data
+
 ## Migration from Standalone Mode
 
 If you previously used this project with its own database:
@@ -315,4 +511,41 @@ If you previously used this project with its own database:
 1. **Backup your data** (if needed)
 2. **Update configuration** to use external database
 3. **Initialize pgvector** in the external database
-4. **Restart services** with new configuration 
+4. **Restart services** with new configuration
+
+## Performance Optimization
+
+### For Production Use
+
+1. **Increase Redis memory** for better caching
+2. **Optimize database queries** with proper indexing
+3. **Use connection pooling** for database connections
+4. **Implement request queuing** for high load scenarios
+5. **Add monitoring** with Prometheus and Grafana
+
+### For Development
+
+1. **Use mock mode** to avoid OpenAI API costs
+2. **Enable hot reload** for faster development
+3. **Use local development** mode with `make dev`
+4. **Monitor logs** with `make logs`
+
+## Security Considerations
+
+1. **Rate limiting** prevents abuse
+2. **Input validation** on all endpoints
+3. **Environment variables** for sensitive data
+4. **Docker security** best practices
+5. **Regular updates** of dependencies
+
+## Contributing
+
+1. **Fork the repository**
+2. **Create feature branch**
+3. **Make changes**
+4. **Run tests**: `make test`
+5. **Submit pull request**
+
+## License
+
+This project is for educational and research purposes only. 
