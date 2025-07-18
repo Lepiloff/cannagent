@@ -1,8 +1,53 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+from decimal import Decimal
 
 
+class StrainBase(BaseModel):
+    name: str = Field(..., description="Strain name")
+    title: Optional[str] = Field(None, description="Strain title")
+    description: Optional[str] = Field(None, description="Strain description")
+    text_content: Optional[str] = Field(None, description="Strain content")
+    keywords: Optional[str] = Field(None, description="SEO keywords")
+    
+    # Cannabinoid content
+    cbd: Optional[Decimal] = Field(None, description="CBD content percentage")
+    thc: Optional[Decimal] = Field(None, description="THC content percentage")
+    cbg: Optional[Decimal] = Field(None, description="CBG content percentage")
+    
+    # Rating and category
+    rating: Optional[Decimal] = Field(None, description="Strain rating")
+    category: Optional[str] = Field(None, description="Strain category (Hybrid/Sativa/Indica)")
+    
+    # Image fields
+    img: Optional[str] = Field(None, description="Image path")
+    img_alt_text: Optional[str] = Field(None, description="Image alt text")
+    
+    # Flags
+    active: bool = Field(False, description="Is strain active")
+    top: bool = Field(False, description="Is top strain")
+    main: bool = Field(False, description="Is main strain")
+    is_review: bool = Field(False, description="Is review strain")
+    
+    # Slug
+    slug: Optional[str] = Field(None, description="URL slug")
+
+
+class StrainCreate(StrainBase):
+    pass
+
+
+class Strain(StrainBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+# Legacy Product schemas for backward compatibility
 class ProductBase(BaseModel):
     name: str = Field(..., description="Product name")
     description: str = Field(..., description="Product description")
@@ -27,7 +72,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="AI response")
-    recommended_products: List[Product] = Field(default_factory=list, description="Recommended products")
+    recommended_strains: List[Strain] = Field(default_factory=list, description="Recommended strains")
+    recommended_products: List[Product] = Field(default_factory=list, description="Legacy recommended products")
     
     
 class HealthResponse(BaseModel):

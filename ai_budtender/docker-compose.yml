@@ -1,22 +1,22 @@
 # Docker Compose file for AI Budtender
+# Configured to use external database from cannamente project
 
 services:
   # API service
   api:
     build: .
     ports:
-      - "8000:8000"
-      - "9090:9090"  # Metrics port
+      - "8001:8000"  # Changed port to avoid conflict with cannamente
+      - "9091:9090"  # Changed metrics port to avoid conflict
     depends_on:
-      - db
       - redis
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/ai_budtender
-      - POSTGRES_HOST=db
+      - DATABASE_URL=postgresql://myuser:mypassword@host.docker.internal:5432/mydatabase
+      - POSTGRES_HOST=host.docker.internal
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=ai_budtender
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=mydatabase
+      - POSTGRES_USER=myuser
+      - POSTGRES_PASSWORD=mypassword
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MOCK_MODE=${MOCK_MODE:-true}
       - REDIS_HOST=redis
@@ -42,31 +42,11 @@ services:
       retries: 3
       start_period: 40s
 
-  # PostgreSQL with pgvector
-  db:
-    image: pgvector/pgvector:pg15
-    environment:
-      - POSTGRES_DB=ai_budtender
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - ai_budtender_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d ai_budtender"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Redis for caching
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"  # Changed port to avoid conflict
     volumes:
       - redis_data:/data
     networks:
@@ -77,18 +57,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # Adminer for database web access (optional)
-  adminer:
-    image: adminer:latest
-    ports:
-      - "8080:8080"
-    depends_on:
-      - db
-    networks:
-      - ai_budtender_network
-
 volumes:
-  postgres_data:
   redis_data:
 
 networks:

@@ -3,12 +3,12 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    # Database
-    database_url: str = "postgresql://user:password@db:5432/ai_budtender"
-    postgres_db: str = "ai_budtender"
-    postgres_user: str = "user"
-    postgres_password: str = "password"
-    postgres_host: str = "db"
+    # Database (External database from cannamente project)
+    database_url: str = "postgresql://myuser:mypassword@host.docker.internal:5432/mydatabase"
+    postgres_db: str = "mydatabase"
+    postgres_user: str = "myuser"
+    postgres_password: str = "mypassword"
+    postgres_host: str = "host.docker.internal"
     postgres_port: int = 5432
     
     # OpenAI

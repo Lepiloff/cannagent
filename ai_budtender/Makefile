@@ -1,4 +1,4 @@
-.PHONY: help build start stop restart logs test clean migration init-db
+.PHONY: help build start stop restart logs test clean migration init-db init-pgvector
 
 # Default target
 help:
@@ -12,6 +12,7 @@ help:
 	@echo "  clean        - Clean up containers and volumes"
 	@echo "  migration    - Create new database migration"
 	@echo "  init-db      - Initialize database with migrations"
+	@echo "  init-pgvector - Initialize pgvector in external database"
 	@echo "  shell        - Open shell in API container"
 	@echo "  redis-cli    - Open Redis CLI"
 
@@ -56,6 +57,12 @@ migration:
 init-db:
 	docker-compose exec api python scripts/init_db.py
 
+# Initialize pgvector in external database
+init-pgvector:
+	@echo "🚀 Initializing pgvector in external cannamente database..."
+	@echo "Make sure cannamente database is running on localhost:5432"
+	python3 scripts/init_pgvector.py
+
 # Open shell in API container
 shell:
 	docker-compose exec api bash
@@ -70,7 +77,7 @@ install:
 
 # Run application locally (for development)
 dev:
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 
 # Format code
 format:
@@ -90,10 +97,15 @@ security:
 freeze:
 	pip freeze > requirements.txt
 
-# Backup database
-backup:
-	docker-compose exec db pg_dump -U user ai_budtender > backup.sql
+# Check database connection
+check-db:
+	@echo "Checking connection to external database..."
+	python3 scripts/check_db_connection.py
 
-# Restore database
-restore:
-	docker-compose exec -T db psql -U user ai_budtender < backup.sql 
+# Show service status
+status:
+	@echo "Service Status:"
+	@echo "API: http://localhost:8001"
+	@echo "Metrics: http://localhost:9091"
+	@echo "Redis: localhost:6380"
+	@echo "External DB: localhost:5432 (cannamente)" 

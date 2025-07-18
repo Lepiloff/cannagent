@@ -4,10 +4,12 @@
 
 AI Budtender is a local prototype of a cloud service that provides an intelligent chatbot for cannabis product e-commerce websites. The bot helps users with product selection, answers questions about products and makes recommendations based on vector search (RAG).
 
+**⚠️ Important**: This project is configured to use an external database from the **cannamente** project. Make sure the cannamente database is running before starting this service.
+
 ## Technologies
 
 - **Backend**: Python 3.11+, FastAPI
-- **Database**: PostgreSQL 15+ with pgvector extension
+- **Database**: External PostgreSQL from cannamente project with pgvector extension
 - **AI/ML**: LangChain, OpenAI API (with mock mode support)
 - **Vector Search**: pgvector for semantic search
 - **Containerization**: Docker, Docker Compose
@@ -17,6 +19,25 @@ AI Budtender is a local prototype of a cloud service that provides an intelligen
 - **Rate Limiting**: SlowAPI for request throttling
 - **Logging**: Structured logging with JSON format
 - **Migrations**: Alembic for database versioning
+
+## Prerequisites
+
+### 1. Cannamente Database
+
+This project requires the **cannamente** database to be running. Make sure:
+
+1. The cannamente project is started and running
+2. PostgreSQL is accessible on `localhost:5432`
+3. Database credentials match the configuration
+
+### 2. pgvector Extension
+
+The database must have the pgvector extension installed. You can initialize it using:
+
+```bash
+# Initialize pgvector in external database
+make init-pgvector
+```
 
 ## Quick Start
 
@@ -32,11 +53,13 @@ cd ai_budtender
 The `.env` file will be automatically created from `env.example` when you start the project. You can also create it manually:
 
 ```env
-# Database
-DATABASE_URL=postgresql://user:password@db:5432/ai_budtender
-POSTGRES_DB=ai_budtender
-POSTGRES_USER=user
-POSTGRES_PASSWORD=password
+# External Database (cannamente project)
+DATABASE_URL=postgresql://myuser:mypassword@host.docker.internal:5432/mydatabase
+POSTGRES_DB=mydatabase
+POSTGRES_USER=myuser
+POSTGRES_PASSWORD=mypassword
+POSTGRES_HOST=host.docker.internal
+POSTGRES_PORT=5432
 
 # OpenAI (optional)
 OPENAI_API_KEY=your_openai_api_key_here
@@ -52,7 +75,14 @@ RATE_LIMIT_REQUESTS=100
 RATE_LIMIT_PERIOD=60
 ```
 
-### 3. Start Project
+### 3. Initialize Database
+
+```bash
+# Initialize pgvector extension in external database
+make init-pgvector
+```
+
+### 4. Start Project
 
 ```bash
 # Using start script
@@ -65,14 +95,23 @@ make start
 docker-compose up --build
 ```
 
-### 4. Access Services
+### 5. Access Services
 
-- **API**: http://localhost:8000
-- **Documentation**: http://localhost:8000/api/v1/docs
-- **Adminer (Database)**: http://localhost:8080
-- **PostgreSQL**: localhost:5432
-- **Redis**: localhost:6379
-- **Metrics**: http://localhost:8000/metrics
+- **API**: http://localhost:8001 (changed to avoid conflict)
+- **Documentation**: http://localhost:8001/api/v1/docs
+- **PostgreSQL**: localhost:5432 (external cannamente DB)
+- **Redis**: localhost:6380 (changed to avoid conflict)
+- **Metrics**: http://localhost:9091 (changed to avoid conflict)
+
+## Port Configuration
+
+To avoid conflicts with the cannamente project, the following ports have been changed:
+
+| Service | Original Port | New Port | Reason |
+|---------|---------------|----------|---------|
+| API | 8000 | 8001 | Avoid conflict with cannamente web |
+| Metrics | 9090 | 9091 | Avoid potential conflicts |
+| Redis | 6379 | 6380 | Avoid potential conflicts |
 
 ## API Usage
 
@@ -171,7 +210,8 @@ ai_budtender/
 │   ├── versions/            # Migration files
 │   └── env.py              # Alembic environment
 ├── scripts/                 # Utility scripts
-│   └── init_db.py          # Database initialization
+│   ├── init_db.py          # Database initialization
+│   └── init_pgvector.py    # pgvector initialization
 ├── tests/                   # Tests
 ├── docker-compose.yml       # Docker configuration
 ├── Dockerfile              # Docker image
@@ -198,158 +238,81 @@ make start
 # Stop all services  
 make stop
 
-# View logs
+# Show logs
 make logs
+
+# Initialize pgvector in external database
+make init-pgvector
+
+# Check database connection
+make check-db
+
+# Show service status
+make status
 
 # Run tests
 make test
 
-# Create database migration
-make migration MSG="Add new field"
-
-# Initialize database
-make init-db
-
-# Open API container shell
+# Open shell in API container
 make shell
 
-# Open Redis CLI
-make redis-cli
-
-# Clean up containers and volumes
+# Clean up
 make clean
 ```
 
-## Data Management
+## Troubleshooting
 
-### Import Products from CSV
+### Database Connection Issues
 
-```python
-from app.utils.data_import import import_products_from_csv
-count = import_products_from_csv("products.csv")
-```
+1. **Check if cannamente is running**:
+   ```bash
+   # In cannamente project directory
+   docker-compose ps
+   ```
 
-### Import Products from JSON
+2. **Verify database connection**:
+   ```bash
+   make check-db
+   ```
 
-```python
-from app.utils.data_import import import_products_from_json
-count = import_products_from_json("products.json")
-```
+3. **Initialize pgvector if needed**:
+   ```bash
+   make init-pgvector
+   ```
 
-### Initialize Sample Data
+### Port Conflicts
 
-Sample products are automatically created on first startup.
+If you encounter port conflicts:
 
-## Testing
+1. Check if cannamente is using the same ports
+2. Modify ports in `docker-compose.yml` if needed
+3. Restart services: `make restart`
 
-```bash
-# Run tests
-make test
+### pgvector Installation
 
-# Run tests with coverage
-docker-compose exec api pytest --cov=app
+If pgvector is not available in your PostgreSQL:
 
-# Run specific test file
-docker-compose exec api pytest tests/test_main.py -v
-```
+1. **For Ubuntu/Debian**:
+   ```bash
+   sudo apt-get install postgresql-15-pgvector
+   ```
 
-## Operating Modes
+2. **For Docker**: Use `pgvector/pgvector:pg15` image in cannamente
 
-### Mock Mode (Default)
-- No OpenAI API key required
-- Uses dummy embeddings and responses
-- Suitable for testing and demonstration
+## Integration with Cannamente
 
-### Production Mode
-- Requires OPENAI_API_KEY
-- Uses real OpenAI embeddings
-- Generates high-quality responses
+This project is designed to work alongside the **cannamente** project:
 
-## Features
+- **Shared Database**: Both projects use the same PostgreSQL instance
+- **Separate Services**: Each project runs independently
+- **Port Isolation**: Different ports to avoid conflicts
+- **Data Sharing**: Products can be shared between projects
 
-### ✅ Implemented Improvements
+## Migration from Standalone Mode
 
-- **Redis Caching**: Embeddings and responses cached for performance
-- **Rate Limiting**: Request throttling to prevent abuse
-- **Structured Logging**: JSON formatted logs for better analysis
-- **Prometheus Metrics**: Comprehensive monitoring and alerting
-- **Async Operations**: Improved performance with async database operations
-- **Alembic Migrations**: Database versioning and schema management
-- **Health Checks**: Comprehensive service health monitoring
+If you previously used this project with its own database:
 
-### 🔧 Performance Optimizations
-
-- **Connection Pooling**: Efficient database connection management
-- **Vector Indexing**: Optimized pgvector operations
-- **Request Batching**: Efficient bulk operations
-- **Memory Management**: Optimized embedding storage
-
-## Debugging
-
-### Service Logs
-```bash
-# All logs
-make logs
-
-# API logs
-docker-compose logs api
-
-# Database logs
-docker-compose logs db
-
-# Redis logs
-docker-compose logs redis
-```
-
-### Database Connection
-```bash
-# Via Adminer: http://localhost:8080
-# System: PostgreSQL
-# Server: db
-# Username: user
-# Password: password
-# Database: ai_budtender
-```
-
-### Redis Connection
-```bash
-# Via Redis CLI
-make redis-cli
-
-# Or direct connection
-redis-cli -h localhost -p 6379
-```
-
-## Project Management
-
-```bash
-# Stop services
-make stop
-
-# Stop with data removal
-make clean
-
-# Backup database
-make backup
-
-# Restore database
-make restore
-```
-
-## Future Enhancements
-
-- ✅ **Redis Caching** - Implemented
-- ✅ **Rate Limiting** - Implemented  
-- ✅ **Structured Logging** - Implemented
-- ✅ **Prometheus Metrics** - Implemented
-- ✅ **Async Operations** - Implemented
-- ✅ **Alembic Migrations** - Implemented
-- 🔄 **JWT Authentication** - Planned
-- 🔄 **WebSocket Support** - Planned
-- 🔄 **Multi-language Support** - Planned
-- 🔄 **Advanced Analytics** - Planned
-- 🔄 **AWS Migration** - Planned
-
-## License
-
-MIT License 
+1. **Backup your data** (if needed)
+2. **Update configuration** to use external database
+3. **Initialize pgvector** in the external database
+4. **Restart services** with new configuration 
