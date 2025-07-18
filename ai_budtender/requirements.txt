@@ -1,0 +1,23 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+langchain>=0.1.0
+langchain-openai>=0.0.2
+psycopg2-binary==2.9.9
+pgvector>=0.2.5
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+sqlalchemy>=2.0.29
+alembic>=1.13.1
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+python-dotenv==1.0.0
+python-multipart==0.0.6
+# New dependencies for improvements
+redis==5.0.1
+aioredis==2.0.1
+slowapi==0.1.9
+prometheus-client==0.19.0
+structlog==23.2.0
+asyncpg==0.29.0
+aiocache==0.12.2 
