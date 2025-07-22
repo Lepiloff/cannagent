@@ -13,6 +13,10 @@ help:
 	@echo "  migration    - Create new database migration"
 	@echo "  init-db      - Initialize database with migrations"
 	@echo "  init-pgvector - Initialize pgvector in external database"
+	@echo "  setup-pgvector - Setup pgvector permanently (run after restart)"
+	@echo "  sync-cannamente - Sync data from cannamente to local DB"
+	@echo "  watch-cannamente - Watch for new strains and sync automatically"
+	@echo "  sync-new        - One-time sync of new strains"
 	@echo "  shell        - Open shell in API container"
 	@echo "  redis-cli    - Open Redis CLI"
 
@@ -27,7 +31,12 @@ start:
 		cp env.example .env; \
 		echo "✅ .env file created. Please edit it if needed."; \
 	fi
+	@echo "🚀 Starting AI Budtender with local database..."
 	docker-compose up -d
+	@echo "⏳ Waiting for services to be ready..."
+	sleep 10
+	@echo "🔍 Checking system health..."
+	make check-db
 
 # Stop all services
 stop:
@@ -62,6 +71,12 @@ init-pgvector:
 	@echo "🚀 Initializing pgvector in external cannamente database..."
 	@echo "Make sure cannamente database is running on localhost:5432"
 	python3 scripts/init_pgvector.py
+
+# Setup pgvector permanently (run once after system restart)
+setup-pgvector:
+	@echo "🔧 Setting up pgvector permanently in cannamente database..."
+	@echo "This will install pgvector and restart PostgreSQL"
+	./scripts/setup_pgvector.sh
 
 # Open shell in API container
 shell:
@@ -108,4 +123,20 @@ status:
 	@echo "API: http://localhost:8001"
 	@echo "Metrics: http://localhost:9091"
 	@echo "Redis: localhost:6380"
-	@echo "External DB: localhost:5432 (cannamente)" 
+	@echo "External DB: localhost:5432 (cannamente)"
+	@echo "Local DB: localhost:5433 (ai_budtender)"
+
+# Sync data from cannamente to local DB
+sync-cannamente:
+	@echo "🔄 Syncing data from cannamente to local database..."
+	python3 scripts/sync_cannamente.py
+
+# Watch for new strains and sync automatically
+watch-cannamente:
+	@echo "🔍 Starting watch mode for new strains..."
+	python3 scripts/watch_cannamente.py
+
+# One-time sync of new strains
+sync-new:
+	@echo "🔄 Syncing new strains from cannamente..."
+	python3 scripts/watch_cannamente.py --once 

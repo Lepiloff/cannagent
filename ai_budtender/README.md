@@ -6,10 +6,60 @@ AI Budtender is a local prototype of a cloud service that provides an intelligen
 
 **⚠️ Important**: This project is configured to use an external database from the **cannamente** project. Make sure the cannamente database is running before starting this service.
 
+## Architecture Options
+
+### Option 1: Local Database (Recommended for Development)
+
+**Advantages:**
+- ✅ Full control over database and pgvector
+- ✅ No dependency on external services
+- ✅ Vector data persists across restarts
+- ✅ Simulates production architecture
+- ✅ Data sync from client database (cannamente)
+
+**How it works:**
+1. **Local PostgreSQL** with pgvector extension
+2. **Data sync** from cannamente (simulates client DB)
+3. **Vector search** on local database
+4. **AI processing** with cached embeddings
+
+### Option 2: External Database (Current)
+
+**Advantages:**
+- ✅ Shared data with cannamente
+- ✅ No data duplication
+- ✅ Real-time updates
+
+**Disadvantages:**
+- ❌ pgvector needs reinstallation after restart
+- ❌ Dependency on external service
+- ❌ Vector data management complexity
+
+## Quick Start
+
+### Option 1: Local Database (Recommended)
+
+```bash
+# Complete setup with local database
+make setup-local
+
+# Or step by step:
+make start-local
+make sync-cannamente
+```
+
+### Option 2: External Database
+
+```bash
+# Start with external cannamente database
+make start
+make setup-pgvector  # After restart
+```
+
 ## Technologies
 
 - **Backend**: Python 3.11+, FastAPI
-- **Database**: External PostgreSQL from cannamente project with pgvector extension
+- **Database**: PostgreSQL with pgvector extension
 - **AI/ML**: LangChain, OpenAI API (with mock mode support)
 - **Vector Search**: pgvector for semantic search
 - **Containerization**: Docker, Docker Compose
@@ -22,43 +72,29 @@ AI Budtender is a local prototype of a cloud service that provides an intelligen
 
 ## Prerequisites
 
-### 1. Cannamente Database
+### For Local Database (Recommended)
 
-This project requires the **cannamente** database to be running. Make sure:
+1. **Docker and Docker Compose** installed
+2. **Cannamente project** running (for data sync)
+3. **Python 3.11+** for sync scripts
 
-1. The cannamente project is started and running
-2. PostgreSQL is accessible on `localhost:5432`
-3. Database credentials match the configuration
+### For External Database
 
-### 2. pgvector Extension
+1. **Cannamente project** must be running
+2. **PostgreSQL** with pgvector extension
+3. **Docker and Docker Compose** installed
 
-The database must have the pgvector extension installed. You can initialize it using:
+## Environment Setup
 
-```bash
-# Initialize pgvector in external database
-make init-pgvector
-```
-
-## Quick Start
-
-### 1. Clone Repository
-
-```bash
-git clone <repository-url>
-cd ai_budtender
-```
-
-### 2. Environment Setup
-
-The `.env` file will be automatically created from `env.example` when you start the project. You can also create it manually:
+### Local Database Configuration
 
 ```env
-# External Database (cannamente project)
-DATABASE_URL=postgresql://myuser:mypassword@host.docker.internal:5432/mydatabase
-POSTGRES_DB=mydatabase
-POSTGRES_USER=myuser
-POSTGRES_PASSWORD=mypassword
-POSTGRES_HOST=host.docker.internal
+# Local Database
+DATABASE_URL=postgresql://ai_user:ai_password@db:5432/ai_budtender
+POSTGRES_DB=ai_budtender
+POSTGRES_USER=ai_user
+POSTGRES_PASSWORD=ai_password
+POSTGRES_HOST=db
 POSTGRES_PORT=5432
 
 # OpenAI (optional)
@@ -75,112 +111,78 @@ RATE_LIMIT_REQUESTS=100
 RATE_LIMIT_PERIOD=60
 ```
 
-### 3. Initialize Database
+### External Database Configuration
 
-```bash
-# Initialize pgvector extension in external database
-make init-pgvector
+```env
+# External Database (cannamente project)
+DATABASE_URL=postgresql://myuser:mypassword@host-gateway:5432/mydatabase
+POSTGRES_DB=mydatabase
+POSTGRES_USER=myuser
+POSTGRES_PASSWORD=mypassword
+POSTGRES_HOST=host-gateway
+POSTGRES_PORT=5432
 ```
-
-### 4. Start Project
-
-```bash
-# Using start script
-./start.sh
-
-# Or using Makefile
-make start
-
-# Or using Docker Compose directly
-docker-compose up --build
-```
-
-### 5. Access Services
-
-- **API**: http://localhost:8001 (changed to avoid conflict)
-- **Documentation**: http://localhost:8001/api/v1/docs
-- **PostgreSQL**: localhost:5432 (external cannamente DB)
-- **Redis**: localhost:6380 (changed to avoid conflict)
-- **Metrics**: http://localhost:9091 (changed to avoid conflict)
 
 ## Port Configuration
 
-To avoid conflicts with the cannamente project, the following ports have been changed:
-
-| Service | Original Port | New Port | Reason |
-|---------|---------------|----------|---------|
-| API | 8000 | 8001 | Avoid conflict with cannamente web |
-| Metrics | 9090 | 9091 | Avoid potential conflicts |
-| Redis | 6379 | 6380 | Avoid potential conflicts |
+| Service | Local DB Port | External DB Port | Reason |
+|---------|---------------|------------------|---------|
+| API | 8001 | 8001 | Avoid conflict with cannamente web |
+| Metrics | 9091 | 9091 | Avoid potential conflicts |
+| Redis | 6380 | 6380 | Avoid potential conflicts |
+| PostgreSQL | 5433 | 5432 | Local vs external |
 
 ## Daily Usage Commands
 
-### Starting the Project
+### Local Database (Recommended)
 
 ```bash
-# Start all services (recommended)
+# Complete setup
+make setup-local
+
+# Start services
+make start-local
+
+# Stop services
+make stop-local
+
+# Sync data from cannamente
+make sync-cannamente
+
+# Check status
+make status
+```
+
+### External Database
+
+```bash
+# Start services
 make start
 
-# Start with logs
-docker-compose up
+# Setup pgvector after restart
+make setup-pgvector
 
-# Start in background
-docker-compose up -d
-```
-
-### Stopping the Project
-
-```bash
-# Stop all services
+# Stop services
 make stop
 
-# Or
-docker-compose down
+# Check status
+make status
 ```
 
-### Checking Status
+### Common Commands
 
 ```bash
-# Show service status
-make status
+# Check database connection
+make check-db
 
 # Show logs
 make logs
 
-# Check database connection
-make check-db
-```
-
-### Development Commands
-
-```bash
-# Open shell in API container
-make shell
-
-# Open Redis CLI
-make redis-cli
-
 # Run tests
 make test
 
-# Restart services
-make restart
-```
-
-### Maintenance Commands
-
-```bash
-# Clean up containers and volumes
-make clean
-
-# Build Docker images
-make build
-
-# Initialize pgvector in external database
-make init-pgvector
-
-# Create new database migration
-make migration MSG="description"
+# Open shell in container
+make shell
 ```
 
 ## API Usage Examples
@@ -294,15 +296,19 @@ open http://localhost:8001/api/v1/docs
 # Help - show all available commands
 make help
 
-# Build and start services
+# Local Database (Recommended)
+make setup-local      # Complete local setup
+make start-local      # Start with local DB
+make stop-local       # Stop local services
+make sync-cannamente  # Sync data from cannamente
+
+# External Database
+make start            # Start with external DB
+make setup-pgvector   # Setup pgvector after restart
+
+# Common Commands
 make build
-make start
-
-# Stop and restart
-make stop
 make restart
-
-# Monitoring and logs
 make logs
 make status
 
@@ -329,6 +335,54 @@ make security
 # Dependencies
 make freeze
 ```
+
+## How It Works
+
+### Local Database Architecture
+
+1. **Data Sync**: Script reads from cannamente (client DB)
+2. **Local Storage**: Data stored in local PostgreSQL with pgvector
+3. **Vector Search**: Fast semantic search on local database
+4. **AI Processing**: LLM generates responses based on local data
+5. **Caching**: Redis caches embeddings and responses
+
+### External Database Architecture
+
+1. **Direct Access**: API directly queries cannamente database
+2. **Vector Search**: Uses pgvector in external database
+3. **AI Processing**: LLM processes data from external source
+4. **Caching**: Redis caches for performance
+
+### 1. Request Flow
+
+1. **User sends question** via `/api/v1/chat/ask/` endpoint
+2. **System generates embedding** for the user's question using OpenAI or mock mode
+3. **Vector search** finds similar products in the database using pgvector
+4. **Context preparation** combines user question with relevant product data
+5. **LLM processing** generates personalized response using OpenAI or mock LLM
+6. **Response formatting** includes both text response and recommended products
+7. **Caching** stores embeddings and responses in Redis for future use
+
+### 2. Vector Search Process
+
+- Uses pgvector extension for semantic similarity search
+- Searches through product descriptions and names
+- Returns top-k most similar products
+- Combines with traditional keyword search for better results
+
+### 3. Caching Strategy
+
+- **Embedding cache**: Stores generated embeddings to avoid re-computation
+- **Response cache**: Caches AI responses for identical queries
+- **Product cache**: Caches frequently accessed product data
+- **TTL-based expiration**: Automatic cleanup of old cache entries
+
+### 4. Rate Limiting
+
+- **API endpoints**: 100 requests per minute per IP
+- **Health endpoints**: 10 requests per minute
+- **Cache operations**: 5 requests per minute
+- **Configurable limits** via environment variables
 
 ## Architecture
 
@@ -362,56 +416,42 @@ ai_budtender/
 │   └── env.py              # Alembic environment
 ├── scripts/                 # Utility scripts
 │   ├── init_db.py          # Database initialization
-│   └── init_pgvector.py    # pgvector initialization
+│   ├── init_pgvector.py    # pgvector initialization
+│   └── sync_cannamente.py  # Data sync from cannamente
 ├── tests/                   # Tests
-├── docker-compose.yml       # Docker configuration
+├── docker-compose.yml       # Docker configuration (external DB)
+├── docker-compose-local.yml # Docker configuration (local DB)
 ├── Dockerfile              # Docker image
 ├── Makefile                # Development commands
 ├── alembic.ini             # Alembic configuration
 └── requirements.txt        # Dependencies
 ```
 
-## How It Works
-
-### 1. Request Flow
-
-1. **User sends question** via `/api/v1/chat/ask/` endpoint
-2. **System generates embedding** for the user's question using OpenAI or mock mode
-3. **Vector search** finds similar products in the database using pgvector
-4. **Context preparation** combines user question with relevant product data
-5. **LLM processing** generates personalized response using OpenAI or mock LLM
-6. **Response formatting** includes both text response and recommended products
-7. **Caching** stores embeddings and responses in Redis for future use
-
-### 2. Vector Search Process
-
-- Uses pgvector extension for semantic similarity search
-- Searches through product descriptions and names
-- Returns top-k most similar products
-- Combines with traditional keyword search for better results
-
-### 3. Caching Strategy
-
-- **Embedding cache**: Stores generated embeddings to avoid re-computation
-- **Response cache**: Caches AI responses for identical queries
-- **Product cache**: Caches frequently accessed product data
-- **TTL-based expiration**: Automatic cleanup of old cache entries
-
-### 4. Rate Limiting
-
-- **API endpoints**: 100 requests per minute per IP
-- **Health endpoints**: 10 requests per minute
-- **Cache operations**: 5 requests per minute
-- **Configurable limits** via environment variables
-
 ## Troubleshooting
 
-### Database Connection Issues
+### Local Database Issues
+
+1. **Database not starting**:
+   ```bash
+   make stop-local
+   docker-compose -f docker-compose-local.yml up -d
+   ```
+
+2. **Sync issues**:
+   ```bash
+   make sync-cannamente
+   ```
+
+3. **Check local database**:
+   ```bash
+   docker exec -it ai_budtender-db-1 psql -U ai_user -d ai_budtender
+   ```
+
+### External Database Issues
 
 1. **Check if cannamente is running**:
    ```bash
-   # In cannamente project directory
-   docker-compose ps
+   docker ps | grep canna
    ```
 
 2. **Verify database connection**:
@@ -422,12 +462,6 @@ ai_budtender/
 3. **Initialize pgvector if needed**:
    ```bash
    make init-pgvector
-   ```
-
-4. **Check database logs**:
-   ```bash
-   # In cannamente directory
-   docker-compose logs postgres
    ```
 
 ### Port Conflicts
@@ -457,78 +491,21 @@ If you encounter port conflicts:
    make start
    ```
 
-### pgvector Installation
+## Production Architecture
 
-If pgvector is not available in your PostgreSQL:
+### Recommended Production Setup
 
-1. **For Ubuntu/Debian**:
-   ```bash
-   sudo apt-get install postgresql-15-pgvector
-   ```
+1. **AWS RDS** with pgvector extension
+2. **Data sync** from client databases via API
+3. **Redis ElastiCache** for caching
+4. **ECS/Fargate** for container orchestration
+5. **API Gateway** for request routing
 
-2. **For Docker**: Use `pgvector/pgvector:pg15` image in cannamente
+### Data Flow in Production
 
-3. **Manual installation**:
-   ```sql
-   CREATE EXTENSION IF NOT EXISTS vector;
-   ```
-
-### Linux Docker Hostname Issues
-
-If you're on Linux and get hostname resolution errors:
-
-1. **Update docker-compose.yml** to use `host-gateway`:
-   ```yaml
-   extra_hosts:
-     - "host.docker.internal:host-gateway"
-   ```
-
-2. **Or use host network**:
-   ```yaml
-   network_mode: host
-   ```
-
-## Integration with Cannamente
-
-This project is designed to work alongside the **cannamente** project:
-
-- **Shared Database**: Both projects use the same PostgreSQL instance
-- **Separate Services**: Each project runs independently
-- **Port Isolation**: Different ports to avoid conflicts
-- **Data Sharing**: Products can be shared between projects
-
-### Data Flow
-
-1. **Cannamente** manages the main cannabis strain database
-2. **AI Budtender** reads from the same database
-3. **pgvector** enables semantic search across strain descriptions
-4. **AI responses** are generated based on the shared data
-
-## Migration from Standalone Mode
-
-If you previously used this project with its own database:
-
-1. **Backup your data** (if needed)
-2. **Update configuration** to use external database
-3. **Initialize pgvector** in the external database
-4. **Restart services** with new configuration
-
-## Performance Optimization
-
-### For Production Use
-
-1. **Increase Redis memory** for better caching
-2. **Optimize database queries** with proper indexing
-3. **Use connection pooling** for database connections
-4. **Implement request queuing** for high load scenarios
-5. **Add monitoring** with Prometheus and Grafana
-
-### For Development
-
-1. **Use mock mode** to avoid OpenAI API costs
-2. **Enable hot reload** for faster development
-3. **Use local development** mode with `make dev`
-4. **Monitor logs** with `make logs`
+```
+Client Database → API Sync → AI Budtender DB → Vector Search → AI Response
+```
 
 ## Security Considerations
 

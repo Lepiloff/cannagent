@@ -1,70 +1,127 @@
-# AI Budtender - Integration Guide with Cannamente
+# AI Budtender Integration Guide
 
 ## Overview
 
-AI Budtender has been configured to work with the existing **cannamente** database. This guide explains how to set up and run the integrated system.
+This guide explains how to integrate AI Budtender with the existing cannamente project, including database setup, configuration changes, and troubleshooting.
 
 ## Prerequisites
 
-1. **Cannamente Project Running**: Make sure the cannamente project is started and running
-2. **Database Access**: PostgreSQL should be accessible on `localhost:5432`
-3. **pgvector Extension**: The database needs the pgvector extension for vector search
+1. **Cannamente project** must be running
+2. **PostgreSQL** with pgvector extension
+3. **Docker and Docker Compose** installed
 
-## Configuration Changes Made
+## Database Setup
 
-### 1. Database Integration
-- **External Database**: AI Budtender now connects to cannamente's PostgreSQL database
-- **Shared Data**: Uses existing `strains` table from cannamente
-- **Vector Search**: Adds embedding column to strains table for semantic search
+### Option 1: Permanent pgvector Installation (Recommended)
 
-### 2. Port Configuration
-To avoid conflicts with cannamente, ports have been changed:
+To avoid reinstalling pgvector after each restart, create a custom PostgreSQL image:
 
-| Service | Original Port | New Port | Reason |
-|---------|---------------|----------|---------|
-| API | 8000 | 8001 | Avoid conflict with cannamente web |
-| Metrics | 9090 | 9091 | Avoid potential conflicts |
-| Redis | 6379 | 6380 | Avoid potential conflicts |
+1. **Create custom Dockerfile in cannamente project:**
 
-### 3. Data Model Integration
-- **Strain Model**: Added SQLAlchemy model matching cannamente's Strain structure
-- **Backward Compatibility**: Kept legacy Product model for compatibility
-- **Rich Data**: Leverages existing strain data (THC, CBD, category, effects, etc.)
+```dockerfile
+# cannamente/docker/postgres-pgvector.Dockerfile
+FROM postgres:13
 
-## Setup Instructions
+# Install pgvector extension
+RUN apt-get update && \
+    apt-get install -y postgresql-13-pgvector && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-### Step 1: Verify Cannamente Database
-```bash
-# Check if cannamente is running
-docker ps | grep canna
-
-# Verify database connection
-make check-db
+# Create extension on database initialization
+RUN echo "CREATE EXTENSION IF NOT EXISTS vector;" > /docker-entrypoint-initdb.d/01-init-pgvector.sql
 ```
 
-### Step 2: Initialize pgvector
-```bash
-# Initialize pgvector extension in cannamente database
-make init-pgvector
+2. **Update cannamente docker-compose.yml:**
+
+```yaml
+services:
+  db:
+    build:
+      context: .
+      dockerfile: docker/postgres-pgvector.Dockerfile
+    # ... rest of configuration
 ```
 
-### Step 3: Start AI Budtender
-```bash
-# Start the service
-make start
+3. **Rebuild and restart cannamente:**
 
-# Or using Docker Compose directly
+```bash
+cd cannamente
+docker-compose down
+docker-compose build db
 docker-compose up -d
 ```
 
-### Step 4: Verify Integration
+### Option 2: Manual Installation (Temporary)
+
+If you prefer manual installation, use the provided script:
+
 ```bash
+# In ai_budtender directory
+./scripts/setup_pgvector.sh
+```
+
+**Note:** This needs to be repeated after each container restart.
+
+## Configuration Changes
+
+### Port Configuration
+
+To avoid conflicts, AI Budtender uses different ports:
+
+| Service | AI Budtender Port | Cannamente Port |
+|---------|-------------------|-----------------|
+| Web API | 8001 | 8000 |
+| Metrics | 9091 | 9090 |
+| Redis | 6380 | 6379 |
+
+### Database Connection
+
+AI Budtender connects to cannamente's PostgreSQL using:
+
+```env
+DATABASE_URL=postgresql://myuser:mypassword@host-gateway:5432/mydatabase
+POSTGRES_HOST=host-gateway
+```
+
+## Setup Steps
+
+### 1. Start Cannamente
+
+```bash
+cd cannamente
+docker-compose up -d
+```
+
+### 2. Initialize pgvector
+
+```bash
+# Option 1: If using custom image (permanent)
+# No action needed - extension is auto-installed
+
+# Option 2: Manual installation
+cd ai_budtender
+./scripts/setup_pgvector.sh
+```
+
+### 3. Start AI Budtender
+
+```bash
+cd ai_budtender
+make start
+```
+
+### 4. Verify Integration
+
+```bash
+# Check database connection
+make check-db
+
 # Check service status
 make status
 
-# Test API endpoints
+# Test API
 curl http://localhost:8001/api/v1/ping/
-curl http://localhost:8001/api/v1/products/
 ```
 
 ## API Endpoints
@@ -74,12 +131,7 @@ curl http://localhost:8001/api/v1/products/
 GET http://localhost:8001/api/v1/ping/
 ```
 
-### Get Strains (from cannamente)
-```bash
-GET http://localhost:8001/api/v1/strains/
-```
-
-### Chat with AI Budtender
+### Chat with AI
 ```bash
 POST http://localhost:8001/api/v1/chat/ask/
 Content-Type: application/json
@@ -90,122 +142,100 @@ Content-Type: application/json
 }
 ```
 
+### Get Products
+```bash
+GET http://localhost:8001/api/v1/products/
+```
+
 ## Data Flow
 
-1. **User Query**: User sends question to AI Budtender
-2. **Embedding Generation**: Query is converted to vector embedding
-3. **Vector Search**: Similar strains are found using pgvector
-4. **Context Formation**: Strain data (THC, CBD, effects, etc.) is prepared
-5. **AI Response**: LLM generates personalized recommendation
-6. **Result**: Response with recommended strains returned
+1. **Cannamente** manages cannabis strain data in PostgreSQL
+2. **AI Budtender** reads from the same database
+3. **pgvector** enables semantic search across strain descriptions
+4. **AI responses** are generated based on the shared data
 
 ## Database Schema
 
-### Strains Table (from cannamente)
+AI Budtender works with the existing `strains_strain` table from cannamente:
+
 ```sql
-CREATE TABLE strains (
+-- Existing cannamente table
+CREATE TABLE strains_strain (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
     title VARCHAR(255),
     text_content TEXT,
-    description VARCHAR(255),
-    keywords VARCHAR(255),
     cbd DECIMAL(5,2),
     thc DECIMAL(5,2),
     cbg DECIMAL(5,2),
-    rating DECIMAL(3,1),
-    category VARCHAR(10),
+    rating DECIMAL(3,2),
+    category VARCHAR(100),
     img VARCHAR(255),
     img_alt_text VARCHAR(255),
-    active BOOLEAN DEFAULT FALSE,
-    top BOOLEAN DEFAULT FALSE,
-    main BOOLEAN DEFAULT FALSE,
-    is_review BOOLEAN DEFAULT FALSE,
-    slug VARCHAR(255) UNIQUE,
-    embedding vector(1536),  -- Added by AI Budtender
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    active BOOLEAN DEFAULT true,
+    top BOOLEAN DEFAULT false,
+    main BOOLEAN DEFAULT false,
+    is_review BOOLEAN DEFAULT false,
+    slug VARCHAR(255),
+    embedding vector(1536)  -- Added by AI Budtender
 );
-```
-
-### Vector Search Index
-```sql
-CREATE INDEX strains_embedding_idx 
-ON strains 
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
 ```
 
 ## Troubleshooting
 
 ### Database Connection Issues
-```bash
-# Check cannamente status
-docker ps | grep canna
 
-# Verify database connection
-make check-db
+1. **Check if cannamente is running:**
+   ```bash
+   docker ps | grep canna
+   ```
 
-# Check database logs
-docker logs canna-db-1
-```
+2. **Verify database connection:**
+   ```bash
+   make check-db
+   ```
+
+3. **Check pgvector installation:**
+   ```bash
+   docker exec -it canna-db-1 psql -U myuser -d mydatabase -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
+   ```
 
 ### Port Conflicts
-```bash
-# Check what's using the ports
-sudo netstat -tlnp | grep :8001
-sudo netstat -tlnp | grep :9091
-sudo netstat -tlnp | grep :6380
-```
 
-### pgvector Issues
-```bash
-# Reinitialize pgvector
-make init-pgvector
+If you encounter port conflicts:
 
-# Check pgvector installation
-docker exec canna-db-1 psql -U myuser -d mydatabase -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
-```
+1. Check if cannamente is using the same ports
+2. Modify ports in `docker-compose.yml` if needed
+3. Restart services: `make restart`
 
-## Development Commands
+### pgvector Not Working
 
-```bash
-# Start services
-make start
+If pgvector is not available:
 
-# Stop services
-make stop
+1. **For custom image approach:**
+   ```bash
+   cd cannamente
+   docker-compose build db
+   docker-compose up -d
+   ```
 
-# View logs
-make logs
+2. **For manual installation:**
+   ```bash
+   ./scripts/setup_pgvector.sh
+   ```
 
-# Check database connection
-make check-db
+## Benefits of Integration
 
-# Initialize pgvector
-make init-pgvector
+1. **Shared Data**: Both projects use the same cannabis strain database
+2. **No Duplication**: Avoid maintaining separate databases
+3. **Consistent Data**: Changes in cannamente are immediately available to AI Budtender
+4. **Resource Efficiency**: Single PostgreSQL instance for both projects
 
-# Run tests
-make test
+## Vector Data Persistence
 
-# Open shell in container
-make shell
+**Important**: Vector embeddings are stored in the database and persist across restarts:
 
-# Show service status
-make status
-```
+- ✅ **Vector data** → stored in PostgreSQL volume (persists)
+- ✅ **Strain data** → stored in PostgreSQL volume (persists)  
+- ❌ **pgvector extension** → installed in container filesystem (lost on rebuild)
 
-## Integration Benefits
-
-1. **Shared Data**: No need to duplicate strain information
-2. **Rich Context**: Access to detailed strain data (THC, CBD, effects, etc.)
-3. **Consistent Updates**: Changes in cannamente automatically available to AI Budtender
-4. **Scalable Architecture**: Separate services, shared database
-5. **Vector Search**: Semantic search across existing strain database
-
-## Next Steps
-
-1. **Test Integration**: Verify that AI Budtender can access and search strains
-2. **Generate Embeddings**: Create embeddings for existing strains
-3. **Test Chat Functionality**: Verify AI recommendations work with real strain data
-4. **Monitor Performance**: Check metrics and logs for optimization opportunities 
+This is why the custom PostgreSQL image approach is recommended for production use. 

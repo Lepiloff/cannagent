@@ -1,7 +1,27 @@
 # Docker Compose file for AI Budtender
-# Configured to use external database from cannamente project
+# Uses local PostgreSQL with pgvector for development
 
 services:
+  # Local PostgreSQL with pgvector
+  db:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_DB: ai_budtender
+      POSTGRES_USER: ai_user
+      POSTGRES_PASSWORD: ai_password
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    networks:
+      - ai_budtender_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_user -d ai_budtender"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # API service
   api:
     build: .
@@ -9,14 +29,17 @@ services:
       - "8001:8000"  # Changed port to avoid conflict with cannamente
       - "9091:9090"  # Changed metrics port to avoid conflict
     depends_on:
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://myuser:mypassword@host-gateway:5432/mydatabase
-      - POSTGRES_HOST=host-gateway
+      - DATABASE_URL=postgresql://ai_user:ai_password@db:5432/ai_budtender
+      - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=mydatabase
-      - POSTGRES_USER=myuser
-      - POSTGRES_PASSWORD=mypassword
+      - POSTGRES_DB=ai_budtender
+      - POSTGRES_USER=ai_user
+      - POSTGRES_PASSWORD=ai_password
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MOCK_MODE=${MOCK_MODE:-true}
       - REDIS_HOST=redis
@@ -33,8 +56,6 @@ services:
       - ./app:/app/app
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini
-    extra_hosts:
-      - "host-gateway:host-gateway"
     networks:
       - ai_budtender_network
     healthcheck:
@@ -60,6 +81,7 @@ services:
       retries: 3
 
 volumes:
+  postgres_data:
   redis_data:
 
 networks:
