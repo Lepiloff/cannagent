@@ -68,15 +68,15 @@ def test_create_product():
 def test_chat_ask():
     """Тест запроса к чату"""
     chat_data = {
-        "message": "Посоветуй что-нибудь для расслабления",
+        "message": "Recommend something for relaxation",
         "history": []
     }
     response = client.post("/api/v1/chat/ask/", json=chat_data)
     assert response.status_code == 200
     data = response.json()
     assert "response" in data
-    assert "recommended_products" in data
-    assert isinstance(data["recommended_products"], list)
+    assert "recommended_strains" in data
+    assert isinstance(data["recommended_strains"], list)
 
 
 def test_get_product_not_found():

@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код приложения
 COPY app/ ./app/
 
+# Устанавливаем PYTHONPATH чтобы Python находил модуль app
+ENV PYTHONPATH=/app
+
 # Создаем пользователя для безопасности
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
