@@ -1,0 +1,10 @@
+FROM postgres:13
+
+# Install pgvector extension
+RUN apt-get update && \
+    apt-get install -y postgresql-13-pgvector && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create extension on database initialization
+RUN echo "CREATE EXTENSION IF NOT EXISTS vector;" > /docker-entrypoint-initdb.d/01-init-pgvector.sql 

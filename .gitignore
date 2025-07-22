@@ -1,2 +1,6 @@
 .idea
 .cursor
+.vscode
+.DS_Store
+*.swp
+*.swo
