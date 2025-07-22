@@ -1,4 +1,4 @@
-.PHONY: help build start stop restart logs test clean migration init-db init-pgvector
+.PHONY: help build start stop restart logs test clean migration init-db
 
 # Default target
 help:
@@ -12,8 +12,7 @@ help:
 	@echo "  clean        - Clean up containers and volumes"
 	@echo "  migration    - Create new database migration"
 	@echo "  init-db      - Initialize database with migrations"
-	@echo "  init-pgvector - Initialize pgvector in external database"
-	@echo "  setup-pgvector - Setup pgvector permanently (run after restart)"
+
 	@echo "  sync-cannamente - Sync data from cannamente to local DB"
 	@echo "  watch-cannamente - Watch for new strains and sync automatically"
 	@echo "  sync-new        - One-time sync of new strains"
@@ -66,17 +65,7 @@ migration:
 init-db:
 	docker-compose exec api python scripts/init_db.py
 
-# Initialize pgvector in external database
-init-pgvector:
-	@echo "🚀 Initializing pgvector in external cannamente database..."
-	@echo "Make sure cannamente database is running on localhost:5432"
-	python3 scripts/init_pgvector.py
 
-# Setup pgvector permanently (run once after system restart)
-setup-pgvector:
-	@echo "🔧 Setting up pgvector permanently in cannamente database..."
-	@echo "This will install pgvector and restart PostgreSQL"
-	./scripts/setup_pgvector.sh
 
 # Open shell in API container
 shell:
