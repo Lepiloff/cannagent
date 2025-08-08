@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.db.database import create_tables
-from app.api import chat, health, products
+from app.api import chat, health, strains
 from app.utils.data_import import initialize_sample_data
 from app.core.logging import setup_logging
 from app.core.metrics import MetricsMiddleware, get_metrics
@@ -14,8 +15,18 @@ from app.core.rate_limiter import rate_limit_handler
 # Setup logging
 setup_logging()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan event handler"""
+    # Startup
+    create_tables()
+    initialize_sample_data()
+    yield
+    # Shutdown (if needed)
+
 # Create FastAPI application
 app = FastAPI(
+    lifespan=lifespan,
     title=settings.project_name,
     version="1.0.0",
     description="AI Budtender - Smart assistant for cannabis product selection",
@@ -59,9 +70,9 @@ app.include_router(
 )
 
 app.include_router(
-    products.router,
-    prefix=f"{settings.api_v1_str}/products",
-    tags=["products"]
+    strains.router,
+    prefix=f"{settings.api_v1_str}/strains", 
+    tags=["strains"]
 )
 
 # Add metrics endpoint
@@ -69,19 +80,7 @@ if settings.enable_metrics:
     app.add_api_route("/metrics", get_metrics, methods=["GET"], tags=["monitoring"])
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Application startup initialization"""
-    # Create database tables
-    create_tables()
-    
-    # Initialize sample data
-    initialize_sample_data()
-    
-    print(f"🚀 {settings.project_name} started!")
-    print(f"📚 Documentation available at: {settings.api_v1_str}/docs")
-    if settings.enable_metrics:
-        print(f"📊 Metrics available at: /metrics")
+
 
 
 @app.get("/")

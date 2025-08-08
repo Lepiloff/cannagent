@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.db.repository import ProductRepository
+from app.db.repository import StrainRepository
 from app.core.rag_service import RAGService
 from app.models.schemas import ChatRequest, ChatResponse
 from app.core.rate_limiter import CHAT_RATE_LIMIT, limiter
@@ -21,7 +21,7 @@ async def ask_question(
     """
     try:
         # Create repository and RAG service
-        repository = ProductRepository(db)
+        repository = StrainRepository(db)
         rag_service = RAGService(repository)
         
         # Process request

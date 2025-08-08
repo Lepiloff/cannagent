@@ -53,9 +53,11 @@ class Settings(BaseSettings):
     cache_ttl: int = 300
     max_connections: int = 100
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    # Cannamente integration
+    cannamente_base_url: str = "http://localhost:8000"  # Base URL for cannamente site
+    strain_url_pattern: str = "/strain/{slug}/"  # URL pattern for strain pages
+    
+    model_config = {"env_file": ".env", "case_sensitive": False}
 
 
 settings = Settings() 

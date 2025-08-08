@@ -1,6 +1,6 @@
-# Cannamente - AI Cannabis Strain Recommendation System
+# Canagent - AI Cannabis Strain Recommendation System
 
-🌿 **Smart cannabis strain recommendations using RAG (Retrieval-Augmented Generation) and vector search.**
+🌿 **Smart cannabis strain recommendations using RAG (Retrieval-Augmented Generation) and vector search with configurable URLs for seamless cannamente integration.**
 
 > **Multi-language support**: English (primary), Spanish (for cannamente integration)
 
@@ -33,7 +33,7 @@ cd ../canna && docker-compose -f docker-compose.local.yaml down
 1. **Create environment file:**
 ```bash
 cp env.example .env
-# Edit OPENAI_API_KEY and other settings
+# Edit OPENAI_API_KEY and cannamente integration settings
 ```
 
 2. **Start the system:**
@@ -48,15 +48,43 @@ make sync-cannamente
 
 ## 🎯 API Usage Examples
 
-### English Query
+### Strain Recommendations
 ```bash
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "What do you recommend for creativity and focus?", "history": []}'
+  -d '{"message": "I need something for relaxation and sleep", "history": []}'
 ```
 
-### Spanish Query (cannamente style)
+**Response includes strain URLs:**
+```json
+{
+  "response": "I recommend Northern Lights for relaxation...",
+  "recommended_strains": [
+    {
+      "name": "Northern Lights",
+      "category": "Indica", 
+      "thc": "18.50",
+      "cbd": "0.10",
+      "slug": "northern-lights",
+      "url": "http://localhost:8000/strain/northern-lights/",
+      "description": "Classic indica strain. Strong relaxing effect..."
+    }
+  ]
+}
+```
+
+### Browse Strains
 ```bash
+# List all available strains
+curl http://localhost:8001/api/v1/strains/
+
+# Get specific strain by ID
+curl http://localhost:8001/api/v1/strains/2
+```
+
+### Multi-language Support
+```bash
+# Spanish Query (cannamente style)
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "¿Qué me recomiendas para creatividad y concentración?", "history": []}'
@@ -66,24 +94,35 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 
 ### Environment Variables
 
-**Production Setup:**
+**Cannamente Integration:**
 ```env
-# OpenAI API
+# Cannamente URL Configuration
+CANNAMENTE_BASE_URL=http://localhost:8000
+STRAIN_URL_PATTERN=/strain/{slug}/
+
+# Database (External cannamente database)
+DATABASE_URL=postgresql://myuser:mypassword@host-gateway:5432/mydatabase
+POSTGRES_HOST=host-gateway
+POSTGRES_PORT=5432
+```
+
+**OpenAI Settings:**
+```env
+# Production Setup
 OPENAI_API_KEY=your_actual_api_key_here
 MOCK_MODE=false                    # Use real OpenAI API
 
-# Database
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-POSTGRES_DB=ai_budtender
-POSTGRES_USER=ai_user
-POSTGRES_PASSWORD=ai_password
+# Development Setup  
+MOCK_MODE=true                     # Use mock responses (saves API costs)
+```
 
+**Performance & Security:**
+```env
 # Redis Caching
 REDIS_HOST=redis
 REDIS_PORT=6379
 
-# Performance
+# Rate Limiting
 RATE_LIMIT_REQUESTS=100
 RATE_LIMIT_PERIOD=60
 
@@ -92,20 +131,28 @@ LOG_LEVEL=INFO
 LOG_FORMAT=json
 ```
 
-**Development Setup:**
+### URL Configuration
+
+The system generates clickable strain URLs for cannamente integration:
+
+| Setting | Description | Example |
+|---------|-------------|---------|
+| `CANNAMENTE_BASE_URL` | Base URL for strain pages | `http://localhost:8000` |
+| `STRAIN_URL_PATTERN` | URL pattern with slug | `/strain/{slug}/` |
+| **Result** | Generated strain URL | `http://localhost:8000/strain/blue-dream/` |
+
+**Custom Configuration Examples:**
 ```env
-# OpenAI API (Development)
-MOCK_MODE=true                     # Use mock responses (saves API costs)
+# For production domain:
+CANNAMENTE_BASE_URL=https://dispensary.com
+STRAIN_URL_PATTERN=/cannabis/{slug}.html
+# Result: https://dispensary.com/cannabis/blue-dream.html
 
-# Other settings same as production
+# For local development:
+CANNAMENTE_BASE_URL=http://localhost:3000  
+STRAIN_URL_PATTERN=/products/strain/{slug}/
+# Result: http://localhost:3000/products/strain/blue-dream/
 ```
-
-### Mock Mode vs Real API
-
-| Mode | Use Case | Cost | Response Quality |
-|------|----------|------|------------------|
-| `MOCK_MODE=true` | Development, testing | Free | Good mock responses |
-| `MOCK_MODE=false` | Production, real usage | OpenAI API costs | Best AI responses |
 
 ## 🛠 Commands
 
@@ -121,8 +168,7 @@ make logs            # Real-time logs
 ```bash
 make check-db        # Check database connection
 make status          # Service status
-make shell           # Container shell access
-make redis-cli       # Redis CLI access
+make test            # Run tests
 ```
 
 ### Data Management
@@ -132,33 +178,26 @@ make sync-new           # Sync only new data
 make watch-cannamente   # Auto-monitor for changes
 ```
 
-### Development
-```bash
-make test            # Run tests
-make build          # Build Docker images
-make clean          # Clean containers and volumes
-```
-
 ## 🏗 Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Cannamente    │    │   AI Budtender   │    │     Client      │
-│   (Source DB)   │───▶│   (Local API)    │───▶│   (Frontend)    │
+│   Cannamente    │    │   Canagent       │    │   Client App    │
+│   (Source DB)   │───▶│   (AI API)       │───▶│   (Frontend)    │
 │                 │    │                  │    │                 │
-│ - Spanish data  │    │ - Vector search  │    │ - Multi-language│
-│ - READ ONLY     │    │ - OpenAI/Mock    │    │ - Real-time API │
+│ - Spanish data  │    │ - Vector search  │    │ - Strain URLs   │
+│ - READ ONLY     │    │ - OpenAI/Mock    │    │ - Recommendations│
 │ - PostgreSQL    │    │ - Redis cache    │    │ - JSON responses│
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
-**Features:**
-- ✅ Local PostgreSQL with pgvector (fast vector search)
-- ✅ Real OpenAI API integration with mock mode fallback
-- ✅ Redis caching for performance
-- ✅ Prometheus metrics monitoring
-- ✅ Multi-language support (English/Spanish)
-- ✅ Production-ready with health checks
+**Key Features:**
+- ✅ **Strain-focused**: Cannabis strain recommendations with full metadata
+- ✅ **Configurable URLs**: Dynamic strain page links for any domain
+- ✅ **Vector Search**: pgvector for semantic strain matching
+- ✅ **Real AI Integration**: OpenAI API with mock mode fallback
+- ✅ **Multi-language**: English/Spanish support
+- ✅ **Production Ready**: Health checks, rate limiting, monitoring
 
 ## 🌐 API Endpoints
 
@@ -169,54 +208,59 @@ curl http://localhost:8001/api/v1/ping/
 
 # Metrics (Prometheus format)
 curl http://localhost:8001/metrics
+```
 
-# Cache statistics
-curl http://localhost:8001/api/v1/cache/stats/
+### Strain API
+```bash
+# List all strains with URLs
+curl http://localhost:8001/api/v1/strains/
+
+# Get specific strain
+curl http://localhost:8001/api/v1/strains/1
+
+# Filter by query parameters
+curl "http://localhost:8001/api/v1/strains/?limit=10&skip=0"
 ```
 
 ### Chat API
 ```bash
-# English recommendation
+# Get strain recommendations
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "I need something for relaxation after work",
+    "message": "What strains are best for creativity and focus?",
     "history": []
   }'
 
-# Spanish recommendation (cannamente style)
+# Follow-up conversation
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "Necesito algo para relajarme después del trabajo",
-    "history": []
+    "message": "Which has higher THC?",
+    "history": ["What strains are best for creativity?", "I recommend Sour Diesel and Green Crack..."]
   }'
 ```
 
-### Product Management
-```bash
-# List all products
-curl http://localhost:8001/api/v1/products/
-
-# Get specific product
-curl http://localhost:8001/api/v1/products/1
-
-# Create new product (for testing)
-curl -X POST http://localhost:8001/api/v1/products/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Test Strain",
-    "description": "Test description"
-  }'
-```
-
-### Cache Management
-```bash
-# View cache stats
-curl http://localhost:8001/api/v1/cache/stats/
-
-# Clear cache
-curl -X POST http://localhost:8001/api/v1/cache/clear/
+### Response Format
+```json
+{
+  "response": "Based on your needs, I recommend these strains...",
+  "recommended_strains": [
+    {
+      "id": 3,
+      "name": "Sour Diesel",
+      "title": "Sour Diesel - Energizing Sativa",
+      "category": "Sativa",
+      "thc": "20.00",
+      "cbd": "0.10", 
+      "description": "Energetic sativa. Provides invigorating and creative effects.",
+      "slug": "sour-diesel",
+      "url": "http://localhost:8000/strain/sour-diesel/",
+      "active": true,
+      "created_at": "2025-08-08T16:33:27.257901"
+    }
+  ]
+}
 ```
 
 ## 📊 Monitoring & Performance
@@ -232,16 +276,13 @@ curl -X POST http://localhost:8001/api/v1/cache/clear/
 # Check system metrics
 curl http://localhost:8001/metrics | grep -E "(http_requests|cache_hits|openai_calls)"
 
-# Cache performance
-curl http://localhost:8001/api/v1/cache/stats/
-
 # Database health
 make check-db
 ```
 
 ### Performance Optimization
-- **Redis Caching**: Similar queries cached for faster responses
-- **Vector Search**: pgvector for efficient similarity search
+- **Vector Search**: pgvector for efficient strain similarity search
+- **Smart Caching**: Similar queries cached for faster responses
 - **Async Operations**: Non-blocking API calls
 - **Rate Limiting**: Protects against API abuse
 
@@ -262,8 +303,8 @@ make check-db
 # Run all tests
 make test
 
-# Check test coverage
-make test-coverage
+# Tests include strain URL generation
+python -m pytest tests/ -v
 ```
 
 ### Manual Testing
@@ -271,15 +312,12 @@ make test-coverage
 # Health check
 curl http://localhost:8001/api/v1/ping/
 
-# English query
+# Strain search
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Best strain for creativity?", "history": []}'
+  -d '{"message": "Best strain for creativity?"}'
 
-# Spanish query
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -H "Content-Type: application/json" \
-  -d '{"message": "¿Mejor cepa para creatividad?", "history": []}'
+# URL verification
+curl http://localhost:8001/api/v1/strains/1 | jq '.url'
 ```
 
 ## 🛡 Security & Production
@@ -293,7 +331,8 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 
 ### Production Checklist
 - [ ] Set `MOCK_MODE=false` and add real `OPENAI_API_KEY`
-- [ ] Configure rate limits for your use case
+- [ ] Configure `CANNAMENTE_BASE_URL` for your domain
+- [ ] Customize `STRAIN_URL_PATTERN` for your URL structure
 - [ ] Set up log aggregation (ELK, Grafana)
 - [ ] Configure backup for PostgreSQL data
 - [ ] Set up monitoring alerts
@@ -314,31 +353,31 @@ nohup make watch-cannamente > sync.log 2>&1 &
 ```
 
 ### Data Flow
-1. **Source**: Cannamente PostgreSQL (Spanish data)
+1. **Source**: Cannamente PostgreSQL (Spanish strain data)
 2. **Sync**: Automatic data sync with change detection
-3. **Processing**: Vector embeddings generation
+3. **Processing**: Vector embeddings generation for strain search
 4. **Storage**: Local PostgreSQL with pgvector
-5. **API**: Multi-language recommendations
+5. **API**: Multi-language strain recommendations with URLs
 
 ## 🗂 Project Structure
 
 ```
-cannamente/
+canagent/
 ├── app/                    # Application source code
 │   ├── api/               # REST API endpoints
 │   │   ├── chat.py       # Chat/recommendation API
 │   │   ├── health.py     # Health checks
-│   │   └── products.py   # Product management
+│   │   └── strains.py    # Strain management API
 │   ├── core/              # Core business logic
 │   │   ├── llm_interface.py  # OpenAI/Mock interface
-│   │   ├── rag_service.py    # RAG implementation
+│   │   ├── rag_service.py    # RAG implementation for strains
 │   │   ├── cache.py          # Redis caching
 │   │   └── metrics.py        # Prometheus metrics
 │   ├── db/                # Database layer
 │   │   ├── database.py   # Connection management
-│   │   └── repository.py # Data access layer
+│   │   └── repository.py # Data access layer (strains + legacy products)
 │   ├── models/            # Data models
-│   │   ├── database.py   # SQLAlchemy models
+│   │   ├── database.py   # SQLAlchemy models (Strain model)
 │   │   └── schemas.py    # Pydantic schemas
 │   └── utils/             # Utilities
 │       └── data_import.py # Data sync utilities
@@ -372,29 +411,36 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ## 📝 Changelog
 
-### Current Version - v2.0
-- ✅ **Multi-language**: English (primary) + Spanish support
-- ✅ **Real AI Integration**: OpenAI API with mock mode fallback
-- ✅ **Performance**: Redis caching, async operations
-- ✅ **Monitoring**: Prometheus metrics, structured logging
-- ✅ **Production Ready**: Health checks, rate limiting
-- ✅ **Data Sync**: Automatic cannamente integration
-- ✅ **Developer Experience**: Simple commands, comprehensive docs
+### Current Version - v3.0 (Strain-focused)
+- ✅ **Strain-centric**: Focus on cannabis strain recommendations vs generic products
+- ✅ **Configurable URLs**: Dynamic strain page links for any cannamente domain
+- ✅ **Enhanced API**: `/api/v1/strains/` endpoint with full strain metadata
+- ✅ **Improved RAG**: Strain-specific semantic search and recommendations
+- ✅ **Clean Architecture**: Removed legacy product code
+- ✅ **URL Integration**: Seamless linking to cannamente strain pages
 
-### Migration from v1.x
-- Project renamed from `ai_budtender` to `cannamente`
-- Added `MOCK_MODE` configuration
-- Improved multi-language support
-- Enhanced monitoring and caching
+### Migration from v2.x
+- **API Changes**: `/products/` API removed, use `/strains/` instead
+- **New Configuration**: Added `CANNAMENTE_BASE_URL` and `STRAIN_URL_PATTERN`
+- **Response Format**: `recommended_strains` with URLs instead of generic products
+- **Database**: Strain-focused data model with full cannabis metadata
+
+### Breaking Changes
+- ❌ `/api/v1/products/` endpoint removed
+- ❌ `recommended_products` field removed from chat responses
+- ✅ Use `/api/v1/strains/` for browsing strains
+- ✅ Use `recommended_strains` field in chat responses
 
 ---
 
 ## 🎯 Ready to Use!
 
-**Quick start:** `make start` and begin making API calls.
+**Quick start:** `make start` and begin making API calls to get strain recommendations with URLs.
+
+**Integration:** Configure your cannamente domain and start receiving clickable strain links.
 
 **Documentation:** All endpoints documented with examples above.
 
 **Support:** Check logs with `make logs` or status with `make status`.
 
-**Community:** This is a modern, production-ready AI recommendation system. 🌿
+**Community:** This is a modern, production-ready AI strain recommendation system with seamless cannamente integration. 🌿

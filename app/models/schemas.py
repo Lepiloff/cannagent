@@ -40,40 +40,21 @@ class StrainCreate(StrainBase):
 
 class Strain(StrainBase):
     id: int
+    url: Optional[str] = Field(None, description="Direct link to strain page on cannamente")
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
-
-
-# Legacy Product schemas for backward compatibility
-class ProductBase(BaseModel):
-    name: str = Field(..., description="Product name")
-    description: str = Field(..., description="Product description")
-
-
-class ProductCreate(ProductBase):
-    pass
-
-
-class Product(ProductBase):
-    id: int
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="User message")
+    message: str = Field(..., description="User message") 
     history: Optional[List[str]] = Field(default=None, description="Message history")
 
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="AI response")
     recommended_strains: List[Strain] = Field(default_factory=list, description="Recommended strains")
-    recommended_products: List[Product] = Field(default_factory=list, description="Legacy recommended products")
     
     
 class HealthResponse(BaseModel):
