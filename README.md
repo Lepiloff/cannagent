@@ -1,142 +1,76 @@
-# AI Budtender - Cannabis Strain Recommendation System
+# Cannamente - AI Cannabis Strain Recommendation System
 
-Интеллектуальная система рекомендаций каннабиса с использованием RAG (Retrieval-Augmented Generation) и векторного поиска.
+🌿 **Smart cannabis strain recommendations using RAG (Retrieval-Augmented Generation) and vector search.**
 
-## 🚀 Быстрый старт
+> **Multi-language support**: English (primary), Spanish (for cannamente integration)
 
-### Ежедневный флоу
+## 🚀 Quick Start
+
+### Prerequisites
+- Docker & Docker Compose
+- Python 3.9+
+- OpenAI API Key (or use mock mode for development)
+
+### Daily Workflow
 
 ```bash
-# Утром (после перезагрузки):
+# Morning (after reboot):
 cd ../cannamente && docker-compose up -d
 cd ai_budtender && make start
 
-# В течение дня:
-make sync-cannamente  # синхронизировать данные
-make check-db         # проверить подключение
-make logs            # посмотреть логи
+# During the day:
+make sync-cannamente    # sync data from cannamente
+make check-db          # verify DB connection
+make logs             # view logs
 
-# Вечером:
+# Evening:
 make stop
 cd ../cannamente && docker-compose down
 ```
 
-### Первоначальная настройка
+### Initial Setup
 
-1. **Создать .env файл:**
+1. **Create environment file:**
 ```bash
 cp env.example .env
-# Отредактировать при необходимости
+# Edit OPENAI_API_KEY and other settings
 ```
 
-2. **Запустить систему:**
+2. **Start the system:**
 ```bash
 make start
 ```
 
-3. **Синхронизировать данные:**
+3. **Sync data from cannamente:**
 ```bash
 make sync-cannamente
 ```
 
-## 🛠 Команды
+## 🎯 API Usage Examples
 
-### Основные команды
-```bash
-make start           # Запустить все сервисы
-make stop            # Остановить сервисы
-make restart         # Перезапустить
-make logs            # Логи в реальном времени
-```
-
-### Мониторинг
-```bash
-make check-db        # Проверка подключения к БД
-make status          # Статус сервисов
-make shell           # Shell в контейнере
-make redis-cli       # Redis CLI
-```
-
-### Синхронизация данных
-```bash
-make sync-cannamente    # Синхронизировать все данные
-make sync-new           # Синхронизировать только новые
-make watch-cannamente   # Автоматический мониторинг
-```
-
-### Разработка
-```bash
-make test            # Запустить тесты
-make build          # Собрать образы
-make clean          # Очистить контейнеры и volumes
-```
-
-## 🏗 Архитектура
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Cannamente    │    │   AI Budtender   │    │     Client      │
-│   (Client DB)   │───▶│   (Local DB)     │───▶│   (Frontend)    │
-│                 │    │                  │    │                 │
-│ - strains data  │    │ - Vector search  │    │ - Chat UI       │
-│ - READ ONLY     │    │ - AI processing  │    │ - API calls     │
-│ - GET/SELECT    │    │ - Cached data    │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
-
-**Преимущества:**
-- ✅ Локальная БД с pgvector (данные сохраняются)
-- ✅ Быстрый векторный поиск
-- ✅ Независимость от внешних сервисов
-- ✅ Автоматическая проверка здоровья при запуске
-
-## 🌐 API Endpoints
-
-### Health Check
-```bash
-curl http://localhost:8001/api/v1/ping/
-```
-
-### Chat
+### English Query
 ```bash
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "Recommend something for relaxation", "history": []}'
+  -d '{"message": "What do you recommend for creativity and focus?", "history": []}'
 ```
 
-### Products
+### Spanish Query (cannamente style)
 ```bash
-curl http://localhost:8001/api/v1/products/
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{"message": "¿Qué me recomiendas para creatividad y concentración?", "history": []}'
 ```
 
-### Cache Management
-```bash
-curl http://localhost:8001/api/v1/cache/stats/    # Статистика
-curl -X POST http://localhost:8001/api/v1/cache/clear/  # Очистить
-```
-
-### Metrics
-```bash
-curl http://localhost:8001/metrics
-```
-
-## ⚙️ Конфигурация
-
-### Порты
-- **API**: 8001
-- **Metrics**: 9091  
-- **Redis**: 6380
-- **Local DB**: 5433
-- **External DB**: 5432 (cannamente)
+## ⚙️ Configuration
 
 ### Environment Variables
 
-Основные настройки в `.env`:
-
+**Production Setup:**
 ```env
 # OpenAI API
-OPENAI_API_KEY=your_key_here
-MOCK_MODE=true
+OPENAI_API_KEY=your_actual_api_key_here
+MOCK_MODE=false                    # Use real OpenAI API
 
 # Database
 POSTGRES_HOST=db
@@ -145,11 +79,11 @@ POSTGRES_DB=ai_budtender
 POSTGRES_USER=ai_user
 POSTGRES_PASSWORD=ai_password
 
-# Redis
+# Redis Caching
 REDIS_HOST=redis
 REDIS_PORT=6379
 
-# Rate Limiting
+# Performance
 RATE_LIMIT_REQUESTS=100
 RATE_LIMIT_PERIOD=60
 
@@ -158,142 +92,309 @@ LOG_LEVEL=INFO
 LOG_FORMAT=json
 ```
 
-## 🔧 Устранение проблем
+**Development Setup:**
+```env
+# OpenAI API (Development)
+MOCK_MODE=true                     # Use mock responses (saves API costs)
 
-### БД не подключается
-```bash
-# Проверить cannamente
-docker ps | grep canna
-
-# Проверить подключения
-make check-db
-
-# Перезапустить
-make restart
+# Other settings same as production
 ```
 
-### Нет данных
+### Mock Mode vs Real API
+
+| Mode | Use Case | Cost | Response Quality |
+|------|----------|------|------------------|
+| `MOCK_MODE=true` | Development, testing | Free | Good mock responses |
+| `MOCK_MODE=false` | Production, real usage | OpenAI API costs | Best AI responses |
+
+## 🛠 Commands
+
+### Core Operations
 ```bash
-# Синхронизировать из cannamente
-make sync-cannamente
+make start           # Start all services
+make stop            # Stop services  
+make restart         # Restart everything
+make logs            # Real-time logs
 ```
 
-### Сервисы не запускаются
+### Monitoring & Health
 ```bash
-# Очистить и пересоздать
-make clean
-make start
+make check-db        # Check database connection
+make status          # Service status
+make shell           # Container shell access
+make redis-cli       # Redis CLI access
 ```
 
-## 🧪 Тестирование
-
+### Data Management
 ```bash
-# Запустить все тесты
-make test
+make sync-cannamente    # Sync all data from cannamente
+make sync-new           # Sync only new data
+make watch-cannamente   # Auto-monitor for changes
+```
 
-# Тест API вручную
+### Development
+```bash
+make test            # Run tests
+make build          # Build Docker images
+make clean          # Clean containers and volumes
+```
+
+## 🏗 Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Cannamente    │    │   AI Budtender   │    │     Client      │
+│   (Source DB)   │───▶│   (Local API)    │───▶│   (Frontend)    │
+│                 │    │                  │    │                 │
+│ - Spanish data  │    │ - Vector search  │    │ - Multi-language│
+│ - READ ONLY     │    │ - OpenAI/Mock    │    │ - Real-time API │
+│ - PostgreSQL    │    │ - Redis cache    │    │ - JSON responses│
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+**Features:**
+- ✅ Local PostgreSQL with pgvector (fast vector search)
+- ✅ Real OpenAI API integration with mock mode fallback
+- ✅ Redis caching for performance
+- ✅ Prometheus metrics monitoring
+- ✅ Multi-language support (English/Spanish)
+- ✅ Production-ready with health checks
+
+## 🌐 API Endpoints
+
+### Health & Status
+```bash
+# Health check
 curl http://localhost:8001/api/v1/ping/
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hi"}'
-```
 
-## 📊 Мониторинг и логи
-
-```bash
-# Просмотр логов
-make logs
-
-# Статус сервисов
-make status
-
-# Метрики Prometheus
-curl http://localhost:9091/metrics
-
-# Статистика Redis
-make redis-cli
-> INFO stats
-```
-
-## 🛡 Безопасность и производительность
-
-### Встроенные функции
-- ✅ Rate limiting (100 req/min по умолчанию)
-- ✅ Structured logging
-- ✅ Prometheus metrics
-- ✅ Redis caching
-- ✅ Async operations
-- ✅ Health checks
-
-### Мониторинг производительности
-```bash
-# Проверить метрики
+# Metrics (Prometheus format)
 curl http://localhost:8001/metrics
 
-# Статистика кеша
+# Cache statistics
+curl http://localhost:8001/api/v1/cache/stats/
+```
+
+### Chat API
+```bash
+# English recommendation
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I need something for relaxation after work",
+    "history": []
+  }'
+
+# Spanish recommendation (cannamente style)
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Necesito algo para relajarme después del trabajo",
+    "history": []
+  }'
+```
+
+### Product Management
+```bash
+# List all products
+curl http://localhost:8001/api/v1/products/
+
+# Get specific product
+curl http://localhost:8001/api/v1/products/1
+
+# Create new product (for testing)
+curl -X POST http://localhost:8001/api/v1/products/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Test Strain",
+    "description": "Test description"
+  }'
+```
+
+### Cache Management
+```bash
+# View cache stats
 curl http://localhost:8001/api/v1/cache/stats/
 
-# Очистить кеш при необходимости
+# Clear cache
 curl -X POST http://localhost:8001/api/v1/cache/clear/
 ```
 
-## 🔄 Workflow автоматизации
+## 📊 Monitoring & Performance
 
-### Автоматическая проверка при запуске
+### Built-in Monitoring
+- **Prometheus Metrics**: Request counts, response times, error rates
+- **Redis Caching**: Query caching, connection pooling
+- **Structured Logging**: JSON format, searchable logs
+- **Health Checks**: Automatic service health monitoring
 
-При выполнении `make start`:
-- ✅ Запускаются все сервисы (API, БД, Redis)
-- ✅ Ждет готовности сервисов  
-- ✅ Автоматически проверяет здоровье системы
-- ✅ Показывает статус подключения к cannamente
-
-### Синхронизация данных
-
+### Key Metrics
 ```bash
-# Однократная синхронизация
+# Check system metrics
+curl http://localhost:8001/metrics | grep -E "(http_requests|cache_hits|openai_calls)"
+
+# Cache performance
+curl http://localhost:8001/api/v1/cache/stats/
+
+# Database health
+make check-db
+```
+
+### Performance Optimization
+- **Redis Caching**: Similar queries cached for faster responses
+- **Vector Search**: pgvector for efficient similarity search
+- **Async Operations**: Non-blocking API calls
+- **Rate Limiting**: Protects against API abuse
+
+## 🔧 Ports & Services
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| API Server | 8001 | Main application |
+| Metrics | 9091 | Prometheus metrics |
+| Redis | 6380 | Caching layer |
+| Local DB | 5433 | Application database |
+| Cannamente DB | 5432 | Source data (external) |
+
+## 🧪 Testing
+
+### Automated Tests
+```bash
+# Run all tests
+make test
+
+# Check test coverage
+make test-coverage
+```
+
+### Manual Testing
+```bash
+# Health check
+curl http://localhost:8001/api/v1/ping/
+
+# English query
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Best strain for creativity?", "history": []}'
+
+# Spanish query
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{"message": "¿Mejor cepa para creatividad?", "history": []}'
+```
+
+## 🛡 Security & Production
+
+### Security Features
+- ✅ **Rate Limiting**: 100 requests/minute per IP
+- ✅ **Input Validation**: Pydantic schemas
+- ✅ **Environment Variables**: Secure configuration
+- ✅ **CORS Protection**: Configurable origins
+- ✅ **Structured Logging**: Audit trail
+
+### Production Checklist
+- [ ] Set `MOCK_MODE=false` and add real `OPENAI_API_KEY`
+- [ ] Configure rate limits for your use case
+- [ ] Set up log aggregation (ELK, Grafana)
+- [ ] Configure backup for PostgreSQL data
+- [ ] Set up monitoring alerts
+- [ ] Review and customize CORS settings
+
+## 🔄 Data Synchronization
+
+### Automatic Sync
+```bash
+# One-time sync from cannamente
 make sync-cannamente
 
-# Мониторинг новых данных (каждые 30 сек)
+# Continuous monitoring (every 30 seconds)
 make watch-cannamente
 
-# В фоне
+# Background monitoring
 nohup make watch-cannamente > sync.log 2>&1 &
 ```
 
-## 📁 Структура проекта
+### Data Flow
+1. **Source**: Cannamente PostgreSQL (Spanish data)
+2. **Sync**: Automatic data sync with change detection
+3. **Processing**: Vector embeddings generation
+4. **Storage**: Local PostgreSQL with pgvector
+5. **API**: Multi-language recommendations
+
+## 🗂 Project Structure
 
 ```
-ai_budtender/
-├── app/                    # Исходный код приложения
-│   ├── api/               # API endpoints
-│   ├── core/              # Основная логика (RAG, LLM)
-│   ├── db/                # База данных и модели
-│   ├── models/            # Pydantic схемы
-│   └── utils/             # Утилиты
-├── scripts/               # Скрипты автоматизации
-│   ├── sync_cannamente.py # Синхронизация данных
-│   ├── watch_cannamente.py # Мониторинг новых данных
-│   ├── check_db_connection.py # Проверка БД
-│   └── init_db.sql        # Инициализация локальной БД
-├── docker-compose.yml     # Docker конфигурация
-├── Dockerfile            # Docker образ
-├── Makefile             # Команды автоматизации
-└── requirements.txt     # Python зависимости
+cannamente/
+├── app/                    # Application source code
+│   ├── api/               # REST API endpoints
+│   │   ├── chat.py       # Chat/recommendation API
+│   │   ├── health.py     # Health checks
+│   │   └── products.py   # Product management
+│   ├── core/              # Core business logic
+│   │   ├── llm_interface.py  # OpenAI/Mock interface
+│   │   ├── rag_service.py    # RAG implementation
+│   │   ├── cache.py          # Redis caching
+│   │   └── metrics.py        # Prometheus metrics
+│   ├── db/                # Database layer
+│   │   ├── database.py   # Connection management
+│   │   └── repository.py # Data access layer
+│   ├── models/            # Data models
+│   │   ├── database.py   # SQLAlchemy models
+│   │   └── schemas.py    # Pydantic schemas
+│   └── utils/             # Utilities
+│       └── data_import.py # Data sync utilities
+├── tests/                 # Test suite
+├── scripts/               # Automation scripts
+├── docker-compose.yml     # Docker configuration
+├── Dockerfile            # Container definition
+├── Makefile              # Command automation
+└── requirements.txt      # Python dependencies
+```
+
+## 🚀 Deployment Options
+
+### Development
+```bash
+# Local development with mock responses
+MOCK_MODE=true make start
+```
+
+### Staging
+```bash
+# Local development with real OpenAI API
+MOCK_MODE=false make start
+```
+
+### Production
+```bash
+# Production deployment
+docker-compose -f docker-compose.prod.yml up -d
 ```
 
 ## 📝 Changelog
 
-### Текущая версия
-- ✅ Локальная PostgreSQL с pgvector
-- ✅ Синхронизация из cannamente (read-only)
-- ✅ Structured logging (structlog)
-- ✅ Redis caching
-- ✅ Rate limiting
-- ✅ Prometheus metrics
-- ✅ Async operations
-- ✅ Health checks
-- ✅ Простой daily workflow
+### Current Version - v2.0
+- ✅ **Multi-language**: English (primary) + Spanish support
+- ✅ **Real AI Integration**: OpenAI API with mock mode fallback
+- ✅ **Performance**: Redis caching, async operations
+- ✅ **Monitoring**: Prometheus metrics, structured logging
+- ✅ **Production Ready**: Health checks, rate limiting
+- ✅ **Data Sync**: Automatic cannamente integration
+- ✅ **Developer Experience**: Simple commands, comprehensive docs
+
+### Migration from v1.x
+- Project renamed from `ai_budtender` to `cannamente`
+- Added `MOCK_MODE` configuration
+- Improved multi-language support
+- Enhanced monitoring and caching
 
 ---
 
-**🎯 Готово к использованию!** Выполни `make start` и начинай работу. 
+## 🎯 Ready to Use!
+
+**Quick start:** `make start` and begin making API calls.
+
+**Documentation:** All endpoints documented with examples above.
+
+**Support:** Check logs with `make logs` or status with `make status`.
+
+**Community:** This is a modern, production-ready AI recommendation system. 🌿
