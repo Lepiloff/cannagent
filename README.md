@@ -15,8 +15,8 @@
 
 ```bash
 # Morning (after reboot):
-cd ../cannamente && docker-compose up -d
-cd ai_budtender && make start
+cd ../canna && docker-compose -f docker-compose.local.yaml up -d
+cd ../canagent && make start
 
 # During the day:
 make sync-cannamente    # sync data from cannamente
@@ -25,7 +25,7 @@ make logs             # view logs
 
 # Evening:
 make stop
-cd ../cannamente && docker-compose down
+cd ../canna && docker-compose -f docker-compose.local.yaml down
 ```
 
 ### Initial Setup
