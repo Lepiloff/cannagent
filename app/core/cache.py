@@ -1,9 +1,9 @@
+import os
 import json
 import hashlib
 from typing import Optional, Any, List
 from aiocache import Cache
 from aiocache.serializers import JsonSerializer
-from app.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -15,9 +15,9 @@ class CacheService:
     def __init__(self):
         self.cache = Cache(
             Cache.REDIS,
-            endpoint=settings.redis_host,
-            port=settings.redis_port,
-            db=settings.redis_db,
+            endpoint=os.getenv('REDIS_HOST', 'redis'),
+            port=int(os.getenv('REDIS_PORT', '6379')),
+            db=int(os.getenv('REDIS_DB', '0')),
             serializer=JsonSerializer(),
         )
     
@@ -44,7 +44,7 @@ class CacheService:
         """Cache embedding for text."""
         cache_key = self._generate_cache_key("embedding", text)
         try:
-            await self.cache.set(cache_key, embedding, ttl=settings.cache_ttl)
+            await self.cache.set(cache_key, embedding, ttl=int(os.getenv('CACHE_TTL', '300')))
             logger.debug("Cached embedding", text_length=len(text))
             return True
         except Exception as e:
@@ -69,7 +69,7 @@ class CacheService:
         """Cache response for query and context."""
         cache_key = self._generate_cache_key("response", f"{query}:{context}")
         try:
-            await self.cache.set(cache_key, response, ttl=settings.cache_ttl)
+            await self.cache.set(cache_key, response, ttl=int(os.getenv('CACHE_TTL', '300')))
             logger.debug("Cached response", query_length=len(query))
             return True
         except Exception as e:
@@ -92,9 +92,9 @@ class CacheService:
             # This would need implementation based on Redis info
             return {
                 "status": "connected",
-                "host": settings.redis_host,
-                "port": settings.redis_port,
-                "db": settings.redis_db
+                "host": os.getenv('REDIS_HOST', 'redis'),
+                "port": int(os.getenv('REDIS_PORT', '6379')),
+                "db": int(os.getenv('REDIS_DB', '0'))
             }
         except Exception as e:
             logger.error("Failed to get cache stats", error=str(e))

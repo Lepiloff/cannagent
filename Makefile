@@ -13,7 +13,7 @@ help:
 	@echo "  migration    - Create new database migration"
 	@echo "  init-db      - Initialize database with migrations"
 
-	@echo "  sync-cannamente - Sync data from cannamente to local DB"
+	@echo "  sync-enhanced   - Enhanced sync with structured data (PRIMARY METHOD)"
 	@echo "  watch-cannamente - Watch for new strains and sync automatically"
 	@echo "  sync-new        - One-time sync of new strains"
 	@echo "  shell        - Open shell in API container"
@@ -109,16 +109,17 @@ check-db:
 # Show service status
 status:
 	@echo "Service Status:"
-	@echo "API: http://localhost:8001"
-	@echo "Metrics: http://localhost:9091"
-	@echo "Redis: localhost:6380"
-	@echo "External DB: localhost:5432 (cannamente)"
-	@echo "Local DB: localhost:5433 (ai_budtender)"
+	@echo "API: http://localhost:$${API_PORT:-8001}"
+	@echo "Metrics: http://localhost:$${METRICS_EXTERNAL_PORT:-9091}"
+	@echo "Redis: localhost:$${REDIS_EXTERNAL_PORT:-6380}"
+	@echo "External DB: localhost:$${CANNAMENTE_POSTGRES_PORT:-5432} (cannamente)"
+	@echo "Local DB: localhost:$${DB_EXTERNAL_PORT:-5433} (ai_budtender)"
 
-# Sync data from cannamente to local DB
-sync-cannamente:
-	@echo "🔄 Syncing data from cannamente to local database..."
-	python3 scripts/sync_cannamente.py
+# Enhanced sync with structured data (feelings, helps_with, etc.) - PRIMARY METHOD
+sync-enhanced:
+	@echo "🔄 Enhanced sync with structured data from cannamente..."
+	@echo "This will sync feelings, helps_with, negatives, flavors and regenerate embeddings"
+	python3 scripts/sync_strain_relations.py
 
 # Watch for new strains and sync automatically
 watch-cannamente:

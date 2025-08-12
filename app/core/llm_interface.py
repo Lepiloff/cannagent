@@ -1,6 +1,6 @@
+import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from app.config import settings
 
 
 class LLMInterface(ABC):
@@ -23,7 +23,7 @@ class OpenAILLM(LLMInterface):
     def __init__(self, api_key: str):
         from langchain_openai import OpenAIEmbeddings, ChatOpenAI
         self.embeddings = OpenAIEmbeddings(
-            model=settings.embedding_model,
+            model=os.getenv('EMBEDDING_MODEL', 'text-embedding-ada-002'),
             openai_api_key=api_key
         )
         self.chat_model = ChatOpenAI(
@@ -55,7 +55,7 @@ class MockLLM(LLMInterface):
         seed = int(hash_obj.hexdigest(), 16) % (2**32)
         
         random.seed(seed)
-        return [random.uniform(-1, 1) for _ in range(settings.vector_dimension)]
+        return [random.uniform(-1, 1) for _ in range(int(os.getenv('VECTOR_DIMENSION', '1536')))]
     
     def generate_response(self, prompt: str) -> str:
         """Генерация мок-ответа"""
@@ -68,7 +68,10 @@ class MockLLM(LLMInterface):
 
 def get_llm() -> LLMInterface:
     """Фабрика для создания LLM провайдера"""
-    if settings.mock_mode or not settings.openai_api_key:
+    mock_mode = os.getenv('MOCK_MODE', 'false').lower() == 'true'
+    openai_api_key = os.getenv('OPENAI_API_KEY')
+    
+    if mock_mode or not openai_api_key:
         return MockLLM()
     else:
-        return OpenAILLM(settings.openai_api_key) 
+        return OpenAILLM(openai_api_key) 

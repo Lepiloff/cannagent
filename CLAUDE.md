@@ -1,4 +1,4 @@
-roject Structure Analysis: AI Budtender 🌿
+Project Structure Analysis: AI Budtender 🌿
 
   This is a Cannabis Strain Recommendation System built with Python FastAPI, implementing RAG (Retrieval-Augmented Generation) and vector search capabilities.
 
@@ -30,9 +30,9 @@ roject Structure Analysis: AI Budtender 🌿
 
   API Layer (app/api/)
 
-  - chat.py - Main chat/recommendation endpoint
-  - products.py - Product management
-  - health.py - Health checks
+  - chat.py - Main chat/recommendation endpoint with intent detection
+  - strains.py - Strain management and browsing
+  - health.py - Health checks and monitoring
 
   Data Layer (app/db/, app/models/)
 
@@ -49,6 +49,96 @@ roject Structure Analysis: AI Budtender 🌿
 
   ✅ Vector similarity search for product recommendations✅ RAG-powered conversational AI✅ Rate limiting (100 req/min default)✅ Redis caching with TTL✅ Prometheus metrics collection✅ Health checks and
   monitoring✅ Mock mode for development without OpenAI✅ Automated data synchronization
+
+  Database Connections
+
+  **Local AI Budtender Database (Inside Docker)**
+  ```python
+  # From within container
+  DATABASE_URL = "postgresql://user:password@db:5432/ai_budtender"
+  
+  # Direct psycopg2 connection from container
+  psycopg2.connect(
+      host='db',
+      port=5432,
+      database='ai_budtender', 
+      user='user',
+      password='password'
+  )
+  ```
+
+  **External Cannamente Database (From host/container)**
+  ```python
+  # Connection configs to try in order:
+  configs = [
+      {
+          'host': 'localhost',  # From host machine
+          'port': 5432,
+          'database': 'mydatabase',
+          'user': 'myuser', 
+          'password': 'mypassword'
+      },
+      {
+          'host': 'host.docker.internal',  # From container to host
+          'port': 5432,
+          'database': 'mydatabase',
+          'user': 'myuser',
+          'password': 'mypassword' 
+      }
+  ]
+  ```
+
+  **Testing Connections & Commands**
+  ```bash
+  # Test API inside container
+  docker compose exec api python -c "
+  import requests
+  response = requests.get('http://localhost:8000/')
+  print('Status:', response.status_code)
+  print('Response:', response.json())
+  "
+  
+  # Test sleep query  
+  docker compose exec api python -c "
+  import requests
+  response = requests.post(
+      'http://localhost:8000/api/v1/chat/ask',
+      json={'message': 'Recomiéndame una variedad para dormir bien'}
+  )
+  result = response.json()
+  print(f'Found {len(result[\"recommended_strains\"])} strains')
+  "
+  
+  # Check strains count
+  docker compose exec api python -c "
+  from app.db.database import SessionLocal
+  from app.db.repository import StrainRepository
+  db = SessionLocal()
+  repo = StrainRepository(db)
+  strains = repo.get_strains(limit=10)
+  print(f'Total strains: {len(strains)}')
+  for strain in strains:
+      print(f'  - {strain.name} ({strain.category})')
+  db.close()
+  "
+  
+  # Run sync from cannamente (if available)
+  docker compose exec api python scripts/sync_strain_relations.py
+  ```
+
+  **Recent Fixes (Latest Session)**
+  - Fixed critical PostgreSQL DISTINCT/ORDER BY conflict in vector similarity queries
+  - Expanded sleep filter to include both Indica and Hybrid strains for better variety (now returns 2+ strains)
+  - Expanded energy filter to include Hybrid strains (not just Sativa) for more comprehensive recommendations
+  - Improved intent detection system to return multiple appropriate options instead of single results
+  - SQL queries restructured using subquery approach to avoid database conflicts
+
+  **Intent Detection System**
+  - IntentType.SLEEP: Prefers Indica & Hybrid, requires Sleepy/Relaxed/Hungry, excludes Energetic/Talkative
+  - IntentType.ENERGY: Prefers Sativa & Hybrid, requires Energetic/Uplifted, excludes Sleepy/Relaxed  
+  - IntentType.CREATIVITY: Prefers Sativa & Hybrid, requires Creative/Euphoric, excludes Sleepy
+  - IntentType.FOCUS: Prefers Sativa & Hybrid, requires Focused/Creative, excludes Sleepy/Giggly
+  - All filters now include appropriate Hybrid strains for better variety
 
   Deployment
 

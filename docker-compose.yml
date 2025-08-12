@@ -40,6 +40,13 @@ services:
       - POSTGRES_DB=ai_budtender
       - POSTGRES_USER=ai_user
       - POSTGRES_PASSWORD=ai_password
+      # Cannamente Database Configuration (External source database)
+      - CANNAMENTE_DATABASE_URL=${CANNAMENTE_DATABASE_URL:-postgresql://myuser:mypassword@host.docker.internal:5432/mydatabase}
+      - CANNAMENTE_POSTGRES_HOST=${CANNAMENTE_POSTGRES_HOST:-host.docker.internal}
+      - CANNAMENTE_POSTGRES_PORT=${CANNAMENTE_POSTGRES_PORT:-5432}
+      - CANNAMENTE_POSTGRES_DB=${CANNAMENTE_POSTGRES_DB:-mydatabase}
+      - CANNAMENTE_POSTGRES_USER=${CANNAMENTE_POSTGRES_USER:-myuser}
+      - CANNAMENTE_POSTGRES_PASSWORD=${CANNAMENTE_POSTGRES_PASSWORD:-mypassword}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MOCK_MODE=${MOCK_MODE:-true}
       - REDIS_HOST=redis
@@ -59,6 +66,9 @@ services:
       - ./tests:/app/tests
     networks:
       - ai_budtender_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "cannamente-db:172.17.0.1"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/ping/"]
       interval: 30s

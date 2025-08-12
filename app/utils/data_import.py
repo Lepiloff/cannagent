@@ -1,81 +1,13 @@
-import json
-import csv
+"""
+Enhanced data import utilities for strain management.
+Legacy product import functions have been replaced by sync_strain_relations.py
+"""
+
 from typing import List, Dict, Any
-from pathlib import Path
 from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
 from app.db.repository import StrainRepository
 from app.core.rag_service import RAGService
-from app.models.schemas import StrainCreate
-
-
-def import_products_from_csv(csv_path: str) -> int:
-    """Импорт товаров из CSV файла"""
-    count = 0
-    db = SessionLocal()
-    
-    try:
-        repository = StrainRepository(db)
-        rag_service = RAGService(repository)
-        
-        with open(csv_path, 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                product = ProductCreate(
-                    name=row['name'],
-                    description=row['description']
-                )
-                
-                # Создаем товар без эмбеддинга
-                created_product = repository.create_product(product, None)
-                
-                # Генерируем эмбеддинг
-                rag_service.add_product_embeddings(created_product.id)
-                
-                count += 1
-                print(f"Импортирован товар: {product.name}")
-                
-    except Exception as e:
-        print(f"Ошибка при импорте: {e}")
-    finally:
-        db.close()
-    
-    return count
-
-
-def import_products_from_json(json_path: str) -> int:
-    """Импорт товаров из JSON файла"""
-    count = 0
-    db = SessionLocal()
-    
-    try:
-        repository = StrainRepository(db)
-        rag_service = RAGService(repository)
-        
-        with open(json_path, 'r', encoding='utf-8') as file:
-            data = json.load(file)
-            
-            for item in data:
-                product = ProductCreate(
-                    name=item['name'],
-                    description=item['description']
-                )
-                
-                # Создаем товар без эмбеддинга
-                created_product = repository.create_product(product, None)
-                
-                # Генерируем эмбеддинг
-                rag_service.add_product_embeddings(created_product.id)
-                
-                count += 1
-                print(f"Импортирован товар: {product.name}")
-                
-    except Exception as e:
-        print(f"Ошибка при импорте: {e}")
-    finally:
-        db.close()
-    
-    return count
 
 
 def create_sample_strains() -> List[Dict[str, Any]]:

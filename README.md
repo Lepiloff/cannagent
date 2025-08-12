@@ -1,6 +1,6 @@
 # Canagent - AI Cannabis Strain Recommendation System
 
-🌿 **Smart cannabis strain recommendations using RAG (Retrieval-Augmented Generation) and vector search with configurable URLs for seamless cannamente integration.**
+🌿 **Smart cannabis strain recommendations using Intent Detection + RAG (Retrieval-Augmented Generation) with structured filtering for accurate, context-aware recommendations.**
 
 > **Multi-language support**: English (primary), Spanish (for cannamente integration)
 
@@ -19,7 +19,7 @@ cd ../canna && docker-compose -f docker-compose.local.yaml up -d
 cd ../canagent && make start
 
 # During the day:
-make sync-cannamente    # sync data from cannamente
+make sync-enhanced     # sync structured data (USE THIS!)
 make check-db          # verify DB connection
 make logs             # view logs
 
@@ -41,9 +41,9 @@ cp env.example .env
 make start
 ```
 
-3. **Sync data from cannamente:**
+3. **Sync enhanced data from cannamente:**
 ```bash
-make sync-cannamente
+make sync-enhanced     # Syncs feelings, effects, medical uses + embeddings
 ```
 
 ## 🎯 API Usage Examples
@@ -55,10 +55,10 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -d '{"message": "I need something for relaxation and sleep", "history": []}'
 ```
 
-**Response includes strain URLs:**
+**Enhanced Response with Intent Detection:**
 ```json
 {
-  "response": "I recommend Northern Lights for relaxation...",
+  "response": "I recommend Northern Lights for relaxation and sleep...",
   "recommended_strains": [
     {
       "name": "Northern Lights",
@@ -67,9 +67,16 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       "cbd": "0.10",
       "slug": "northern-lights",
       "url": "http://localhost:8000/strain/northern-lights/",
-      "description": "Classic indica strain. Strong relaxing effect..."
+      "description": "Classic indica strain. Strong relaxing effect...",
+      "feelings": [{"name": "Sleepy", "energy_type": "relaxing"}],
+      "helps_with": [{"name": "Insomnia"}]
     }
-  ]
+  ],
+  "detected_intent": "sleep",
+  "filters_applied": {
+    "preferred_categories": ["Indica"],
+    "exclude_feelings": ["Energetic", "Talkative"]
+  }
 }
 ```
 
@@ -100,10 +107,13 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 CANNAMENTE_BASE_URL=http://localhost:8000
 STRAIN_URL_PATTERN=/strain/{slug}/
 
-# Database (External cannamente database)
-DATABASE_URL=postgresql://myuser:mypassword@host-gateway:5432/mydatabase
-POSTGRES_HOST=host-gateway
-POSTGRES_PORT=5432
+# Cannamente Database (External source database)
+CANNAMENTE_DATABASE_URL=postgresql://myuser:mypassword@host-gateway:5432/mydatabase
+CANNAMENTE_POSTGRES_HOST=host-gateway
+CANNAMENTE_POSTGRES_PORT=5432
+CANNAMENTE_POSTGRES_DB=mydatabase
+CANNAMENTE_POSTGRES_USER=myuser
+CANNAMENTE_POSTGRES_PASSWORD=mypassword
 ```
 
 **OpenAI Settings:**
@@ -173,31 +183,40 @@ make test            # Run tests
 
 ### Data Management
 ```bash
-make sync-cannamente    # Sync all data from cannamente
+make sync-enhanced      # Enhanced sync with structured data (PRIMARY METHOD)
 make sync-new           # Sync only new data
 make watch-cannamente   # Auto-monitor for changes
 ```
 
-## 🏗 Architecture
+## 🏗 Enhanced Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   Cannamente    │    │   Canagent       │    │   Client App    │
 │   (Source DB)   │───▶│   (AI API)       │───▶│   (Frontend)    │
 │                 │    │                  │    │                 │
-│ - Spanish data  │    │ - Vector search  │    │ - Strain URLs   │
-│ - READ ONLY     │    │ - OpenAI/Mock    │    │ - Recommendations│
-│ - PostgreSQL    │    │ - Redis cache    │    │ - JSON responses│
+│ - Strain data   │    │ 🧠 Intent Detection │    │ - Strain URLs   │
+│ - Feelings      │    │ 🔍 Structured Filter │    │ - Smart Results │
+│ - Medical uses  │    │ 🔗 Vector Search    │    │ - Intent Info   │
+│ - Effects       │    │ 🤖 OpenAI/Mock     │    │ - JSON responses│
+│ - PostgreSQL    │    │ 💾 Redis cache     │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
+### 🎯 Smart Recommendation Flow:
+1. **Intent Detection**: "I need sleep" → `IntentType.SLEEP`
+2. **Structured Filtering**: Prefer Indica, Require Sleepy/Relaxed, Exclude Energetic  
+3. **Vector Search**: Semantic similarity within filtered results
+4. **AI Response**: Context-aware explanation with pre-filtered strains
+
 **Key Features:**
-- ✅ **Strain-focused**: Cannabis strain recommendations with full metadata
-- ✅ **Configurable URLs**: Dynamic strain page links for any domain
-- ✅ **Vector Search**: pgvector for semantic strain matching
-- ✅ **Real AI Integration**: OpenAI API with mock mode fallback
-- ✅ **Multi-language**: English/Spanish support
-- ✅ **Production Ready**: Health checks, rate limiting, monitoring
+- ✅ **Intent-Aware**: Automatic detection of user needs (sleep/energy/focus/pain)
+- ✅ **Structured Filtering**: Never recommends conflicting strains (e.g., energizing sativas for sleep)
+- ✅ **Rich Metadata**: Full strain effects, medical uses, flavors, and terpenes
+- ✅ **Vector Search**: pgvector for semantic strain matching within filtered results
+- ✅ **Real AI Integration**: OpenAI API with intelligent mock mode fallback
+- ✅ **Multi-language**: English/Spanish support with intent detection
+- ✅ **Production Ready**: Health checks, rate limiting, monitoring, automated sync
 
 ## 🌐 API Endpoints
 
@@ -222,46 +241,80 @@ curl http://localhost:8001/api/v1/strains/1
 curl "http://localhost:8001/api/v1/strains/?limit=10&skip=0"
 ```
 
-### Chat API
-```bash
-# Get strain recommendations
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "What strains are best for creativity and focus?",
-    "history": []
-  }'
+### Enhanced Chat API with Intent Detection
 
-# Follow-up conversation
+```bash
+# Sleep/Relaxation Query
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": "Which has higher THC?",
-    "history": ["What strains are best for creativity?", "I recommend Sour Diesel and Green Crack..."]
-  }'
+  -d '{"message": "I need something for sleep", "history": []}'
+
+# Energy/Focus Query  
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I need energy and focus for work", "history": []}'
+
+# Pain Relief Query
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What helps with chronic pain?", "history": []}'
 ```
 
-### Response Format
+### Enhanced Response Format with Structured Data
 ```json
 {
-  "response": "Based on your needs, I recommend these strains...",
+  "response": "For sleep, I recommend Northern Lights...",
   "recommended_strains": [
     {
-      "id": 3,
-      "name": "Sour Diesel",
-      "title": "Sour Diesel - Energizing Sativa",
-      "category": "Sativa",
-      "thc": "20.00",
-      "cbd": "0.10", 
-      "description": "Energetic sativa. Provides invigorating and creative effects.",
-      "slug": "sour-diesel",
-      "url": "http://localhost:8000/strain/sour-diesel/",
-      "active": true,
-      "created_at": "2025-08-08T16:33:27.257901"
+      "id": 2,
+      "name": "Northern Lights", 
+      "category": "Indica",
+      "thc": "18.50",
+      "cbd": "0.10",
+      "slug": "northern-lights",
+      "url": "http://localhost:8000/strain/northern-lights/",
+      "feelings": [
+        {"name": "Sleepy", "energy_type": "relaxing"},
+        {"name": "Relaxed", "energy_type": "relaxing"}
+      ],
+      "helps_with": [
+        {"name": "Insomnia"},
+        {"name": "Stress"}
+      ],
+      "negatives": [
+        {"name": "Dry mouth"},
+        {"name": "Dry eyes"}
+      ],
+      "flavors": [
+        {"name": "earthy"},
+        {"name": "pine"}
+      ]
     }
-  ]
+  ],
+  "detected_intent": "sleep",
+  "filters_applied": {
+    "preferred_categories": ["Indica"],
+    "required_feelings": ["Sleepy", "Relaxed", "Hungry"],
+    "exclude_feelings": ["Energetic", "Focused", "Talkative", "Uplifted"]
+  }
 }
 ```
+
+### Intent Detection Examples
+
+The system automatically detects user intent and applies appropriate filtering:
+
+| Query | Detected Intent | Preferred Categories | Required Effects | Excluded Effects |
+|-------|-----------------|---------------------|------------------|------------------|
+| "I need sleep" | `sleep` | Indica, Hybrid | Sleepy, Relaxed, Hungry | Energetic, Talkative |
+| "Need energy for work" | `energy` | Sativa, Hybrid | Energetic, Uplifted | Sleepy, Relaxed |
+| "Help with anxiety" | `anxiety_relief` | Indica, Hybrid | Relaxed, Happy | Anxious, Paranoid |
+| "Creative inspiration" | `creativity` | Sativa, Hybrid | Creative, Euphoric | Sleepy |
+
+**Recent Improvements (v4.1):**
+- Sleep queries now return multiple options (e.g., Northern Lights + OG Kush)  
+- Energy queries include energizing Hybrids (e.g., Blue Dream + Sour Diesel)
+- All filters expanded to include relevant Hybrid strains for better variety
 
 ## 📊 Monitoring & Performance
 
@@ -288,13 +341,15 @@ make check-db
 
 ## 🔧 Ports & Services
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| API Server | 8001 | Main application |
-| Metrics | 9091 | Prometheus metrics |
-| Redis | 6380 | Caching layer |
-| Local DB | 5433 | Application database |
-| Cannamente DB | 5432 | Source data (external) |
+| Service | Port | Purpose | Environment Variable |
+|---------|------|---------|---------------------|
+| API Server | 8001 | Main application | `API_PORT` |
+| Metrics | 9091 | Prometheus metrics | `METRICS_EXTERNAL_PORT` |
+| Redis | 6380 | Caching layer | `REDIS_EXTERNAL_PORT` |
+| Local DB | 5433 | Application database | `DB_EXTERNAL_PORT` |
+| Cannamente DB | 5432 | Source data (external) | `CANNAMENTE_POSTGRES_PORT` |
+
+All ports are configurable via environment variables with sensible defaults.
 
 ## 🧪 Testing
 
@@ -342,10 +397,10 @@ curl http://localhost:8001/api/v1/strains/1 | jq '.url'
 
 ### Automatic Sync
 ```bash
-# One-time sync from cannamente
-make sync-cannamente
+# One-time enhanced sync from cannamente (RECOMMENDED)
+make sync-enhanced
 
-# Continuous monitoring (every 30 seconds)
+# Continuous monitoring (every 30 seconds) 
 make watch-cannamente
 
 # Background monitoring
@@ -365,24 +420,29 @@ nohup make watch-cannamente > sync.log 2>&1 &
 canagent/
 ├── app/                    # Application source code
 │   ├── api/               # REST API endpoints
-│   │   ├── chat.py       # Chat/recommendation API
-│   │   ├── health.py     # Health checks
+│   │   ├── chat.py       # Enhanced chat API with intent detection
+│   │   ├── health.py     # Health checks and monitoring
 │   │   └── strains.py    # Strain management API
 │   ├── core/              # Core business logic
-│   │   ├── llm_interface.py  # OpenAI/Mock interface
-│   │   ├── rag_service.py    # RAG implementation for strains
-│   │   ├── cache.py          # Redis caching
-│   │   └── metrics.py        # Prometheus metrics
+│   │   ├── intent_detection.py # Intent detection and filtering rules
+│   │   ├── rag_service.py      # Enhanced RAG with structured filtering
+│   │   ├── llm_interface.py    # OpenAI/Mock interface
+│   │   ├── cache.py            # Redis caching layer
+│   │   └── metrics.py          # Prometheus metrics
 │   ├── db/                # Database layer
-│   │   ├── database.py   # Connection management
-│   │   └── repository.py # Data access layer (strains + legacy products)
+│   │   ├── database.py   # Connection management + new models
+│   │   └── repository.py # Enhanced repository with structured filtering
 │   ├── models/            # Data models
-│   │   ├── database.py   # SQLAlchemy models (Strain model)
-│   │   └── schemas.py    # Pydantic schemas
+│   │   ├── database.py   # SQLAlchemy models (Strain + Relations)
+│   │   └── schemas.py    # Pydantic schemas with structured data
 │   └── utils/             # Utilities
-│       └── data_import.py # Data sync utilities
+│       └── data_import.py # Sample data utilities
 ├── tests/                 # Test suite
 ├── scripts/               # Automation scripts
+│   ├── sync_strain_relations.py  # Enhanced sync with structured data (PRIMARY)
+│   ├── init_pgvector.sql         # Minimal pgvector initialization for production
+│   ├── check_db_connection.py    # Database health checks
+│   └── watch_cannamente.py       # Real-time sync monitoring
 ├── docker-compose.yml     # Docker configuration
 ├── Dockerfile            # Container definition
 ├── Makefile              # Command automation
@@ -411,16 +471,31 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ## 📝 Changelog
 
-### Current Version - v3.0 (Strain-focused)
-- ✅ **Strain-centric**: Focus on cannabis strain recommendations vs generic products
-- ✅ **Configurable URLs**: Dynamic strain page links for any cannamente domain
-- ✅ **Enhanced API**: `/api/v1/strains/` endpoint with full strain metadata
-- ✅ **Improved RAG**: Strain-specific semantic search and recommendations
-- ✅ **Clean Architecture**: Removed legacy product code
-- ✅ **URL Integration**: Seamless linking to cannamente strain pages
+### Latest Updates - v4.1 (Enhanced Filtering & Stability)
+- 🔧 **SQL Fix**: Resolved critical PostgreSQL DISTINCT/ORDER BY conflict in vector similarity queries
+- 🌿 **Better Sleep Recommendations**: Sleep queries now return multiple strains (Indica + appropriate Hybrids)
+- ⚡ **Better Energy Recommendations**: Energy queries now include energizing Hybrid strains (not just Sativa)
+- 📊 **More Variety**: All intent filters expanded to include relevant Hybrid strains for comprehensive results
+- 🔍 **Improved Query Structure**: Database queries restructured for better performance and stability
 
-### Migration from v2.x
-- **API Changes**: `/products/` API removed, use `/strains/` instead
+### Current Version - v4.0 (Intent-Aware Intelligence)
+- ✅ **Intent Detection**: Automatic detection of user needs (sleep/energy/focus/pain/anxiety)
+- ✅ **Structured Filtering**: Never recommends conflicting strains (e.g., energizing sativas for sleep)
+- ✅ **Rich Metadata**: Full strain effects, medical uses, flavors, and terpenes from cannamente
+- ✅ **Enhanced Sync**: `make sync-enhanced` syncs all structured data automatically
+- ✅ **Smart Recommendations**: 3-layer filtering (Intent → Structure → Vector)
+- ✅ **Detailed Responses**: Includes detected intent and applied filters
+- ✅ **Production Ready**: Automated sync, no manual database operations
+
+### Major Problem Solved ✨
+**Before**: "I need sleep" could return Sour Diesel (Sativa, Energetic, Talkative) ❌  
+**After**: "I need sleep" returns Northern Lights (Indica, Sleepy, Relaxed) ✅
+
+### Migration from v3.x
+- **Enhanced API**: Responses now include `detected_intent` and `filters_applied`
+- **New Command**: Use `make sync-enhanced` instead of `make sync-cannamente`
+- **Rich Data**: Strain responses include feelings, helps_with, negatives, flavors
+- **Backwards Compatible**: All existing endpoints continue to work
 - **New Configuration**: Added `CANNAMENTE_BASE_URL` and `STRAIN_URL_PATTERN`
 - **Response Format**: `recommended_strains` with URLs instead of generic products
 - **Database**: Strain-focused data model with full cannabis metadata

@@ -5,7 +5,7 @@ from app.db.database import get_db
 from app.db.repository import StrainRepository
 from app.models.schemas import Strain
 from app.core.rate_limiter import PRODUCTS_RATE_LIMIT, limiter
-from app.config import settings
+import os
 
 router = APIRouter()
 
@@ -30,7 +30,9 @@ async def get_strains(
         for strain in strains:
             strain_url = None
             if strain.slug:
-                strain_url = f"{settings.cannamente_base_url}{settings.strain_url_pattern.format(slug=strain.slug)}"
+                base_url = os.getenv('CANNAMENTE_BASE_URL', 'http://localhost:8000')
+                url_pattern = os.getenv('STRAIN_URL_PATTERN', '/strain/{slug}/')
+                strain_url = f"{base_url}{url_pattern.format(slug=strain.slug)}"
             
             result.append(Strain(
                 id=strain.id,
@@ -82,7 +84,9 @@ async def get_strain(
         # Build URL
         strain_url = None
         if strain.slug:
-            strain_url = f"{settings.cannamente_base_url}{settings.strain_url_pattern.format(slug=strain.slug)}"
+            base_url = os.getenv('CANNAMENTE_BASE_URL', 'http://localhost:8000')
+            url_pattern = os.getenv('STRAIN_URL_PATTERN', '/strain/{slug}/')
+            strain_url = f"{base_url}{url_pattern.format(slug=strain.slug)}"
         
         return Strain(
             id=strain.id,

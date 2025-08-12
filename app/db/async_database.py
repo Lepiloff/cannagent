@@ -1,16 +1,16 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from app.config import settings
+import os
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 # Create async engine
 async_engine = create_async_engine(
-    settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
-    echo=settings.debug,
-    max_overflow=settings.max_connections,
-    pool_size=settings.max_connections // 2,
+    os.getenv('DATABASE_URL', 'postgresql://user:password@db:5432/ai_budtender').replace("postgresql://", "postgresql+asyncpg://"),
+    echo=os.getenv('DEBUG', 'false').lower() == 'true',
+    max_overflow=int(os.getenv('MAX_CONNECTIONS', '100')),
+    pool_size=int(os.getenv('MAX_CONNECTIONS', '100')) // 2,
     pool_pre_ping=True,
     pool_recycle=300,
 )

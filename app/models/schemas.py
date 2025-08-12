@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from decimal import Decimal
 
@@ -38,11 +38,76 @@ class StrainCreate(StrainBase):
     pass
 
 
+# New schemas for structured data
+class FeelingBase(BaseModel):
+    name: str = Field(..., description="Feeling name")
+    energy_type: str = Field(..., description="Energy type: energizing, relaxing, or neutral")
+
+
+class Feeling(FeelingBase):
+    id: int
+    created_at: datetime
+    
+    model_config = {"from_attributes": True}
+
+
+class HelpsWithBase(BaseModel):
+    name: str = Field(..., description="Medical condition or use")
+
+
+class HelpsWith(HelpsWithBase):
+    id: int
+    created_at: datetime
+    
+    model_config = {"from_attributes": True}
+
+
+class NegativeBase(BaseModel):
+    name: str = Field(..., description="Negative side effect")
+
+
+class Negative(NegativeBase):
+    id: int
+    created_at: datetime
+    
+    model_config = {"from_attributes": True}
+
+
+class FlavorBase(BaseModel):
+    name: str = Field(..., description="Flavor name")
+
+
+class Flavor(FlavorBase):
+    id: int
+    created_at: datetime
+    
+    model_config = {"from_attributes": True}
+
+
+class TerpeneBase(BaseModel):
+    name: str = Field(..., description="Terpene name")
+    description: Optional[str] = Field(None, description="Terpene description")
+
+
+class Terpene(TerpeneBase):
+    id: int
+    created_at: datetime
+    
+    model_config = {"from_attributes": True}
+
+
 class Strain(StrainBase):
     id: int
     url: Optional[str] = Field(None, description="Direct link to strain page on cannamente")
     created_at: datetime
     updated_at: datetime
+    
+    # Related data
+    feelings: List[Feeling] = Field(default_factory=list, description="Strain feelings/effects")
+    helps_with: List[HelpsWith] = Field(default_factory=list, description="Medical uses")
+    negatives: List[Negative] = Field(default_factory=list, description="Side effects")
+    flavors: List[Flavor] = Field(default_factory=list, description="Flavors")
+    terpenes: List[Terpene] = Field(default_factory=list, description="Terpenes")
     
     model_config = {"from_attributes": True}
 
@@ -55,6 +120,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str = Field(..., description="AI response")
     recommended_strains: List[Strain] = Field(default_factory=list, description="Recommended strains")
+    detected_intent: Optional[str] = Field(None, description="Detected user intent")
+    filters_applied: Optional[dict] = Field(None, description="Applied filtering rules")
     
     
 class HealthResponse(BaseModel):
@@ -76,4 +143,18 @@ class MetricsResponse(BaseModel):
     active_requests: int = Field(..., description="Active HTTP requests")
     total_chat_requests: int = Field(..., description="Total chat requests")
     total_embeddings: int = Field(..., description="Total embedding requests")
-    cache_hit_rate: float = Field(..., description="Cache hit rate percentage") 
+    cache_hit_rate: float = Field(..., description="Cache hit rate percentage")
+
+
+class StrainFilterRequest(BaseModel):
+    """Request for filtered strain search"""
+    query: Optional[str] = Field(None, description="Search query")
+    categories: Optional[List[str]] = Field(None, description="Filter by categories")
+    feelings: Optional[List[str]] = Field(None, description="Required feelings")
+    helps_with: Optional[List[str]] = Field(None, description="Required medical uses")
+    exclude_feelings: Optional[List[str]] = Field(None, description="Exclude feelings")
+    min_thc: Optional[float] = Field(None, description="Minimum THC percentage")
+    max_thc: Optional[float] = Field(None, description="Maximum THC percentage")
+    min_cbd: Optional[float] = Field(None, description="Minimum CBD percentage")
+    max_cbd: Optional[float] = Field(None, description="Maximum CBD percentage")
+    limit: int = Field(10, description="Maximum results to return") 

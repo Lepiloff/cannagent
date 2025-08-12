@@ -15,6 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем код приложения
 COPY app/ ./app/
+COPY scripts/ ./scripts/
+COPY migrations/ ./migrations/
 
 # Устанавливаем PYTHONPATH чтобы Python находил модуль app
 ENV PYTHONPATH=/app

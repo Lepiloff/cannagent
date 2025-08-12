@@ -2,7 +2,7 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTEN
 from fastapi import Request, Response
 from typing import Callable
 import time
-from app.config import settings
+import os
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -122,7 +122,7 @@ def record_database_connections(count: int):
 
 async def get_metrics() -> Response:
     """Get Prometheus metrics."""
-    if not settings.enable_metrics:
+    if not os.getenv('ENABLE_METRICS', 'true').lower() == 'true':
         return Response(content="Metrics disabled", status_code=404)
     
     try:
