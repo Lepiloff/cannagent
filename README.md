@@ -19,9 +19,9 @@ cd ../canna && docker-compose -f docker-compose.local.yaml up -d
 cd ../canagent && make start
 
 # During the day:
-make sync-enhanced     # sync structured data (USE THIS!)
-make check-db          # verify DB connection
-make logs             # view logs
+make sync-strains      # sync structured data from cannamente
+make logs              # view logs
+make status            # check service status
 
 # Evening:
 make stop
@@ -41,16 +41,20 @@ cp env.example .env
 make start
 ```
 
-3. **Sync enhanced data from cannamente:**
+3. **Initialize database and sync data:**
 ```bash
-make sync-enhanced     # Syncs feelings, effects, medical uses + embeddings
+# Full database initialization (for first time or after reset)
+docker compose exec api python scripts/init_database.py
+
+# Or use regular sync for updates
+make sync-strains     # Syncs feelings, effects, medical uses + embeddings
 ```
 
 ## 🎯 API Usage Examples
 
 ### Strain Recommendations
 ```bash
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+curl -X POST http://localhost:8000/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "I need something for relaxation and sleep", "history": []}'
 ```
@@ -83,16 +87,16 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 ### Browse Strains
 ```bash
 # List all available strains
-curl http://localhost:8001/api/v1/strains/
+curl http://localhost:8000/api/v1/strains/
 
 # Get specific strain by ID
-curl http://localhost:8001/api/v1/strains/2
+curl http://localhost:8000/api/v1/strains/2
 ```
 
 ### Multi-language Support
 ```bash
 # Spanish Query (cannamente style)
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+curl -X POST http://localhost:8000/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "¿Qué me recomiendas para creatividad y concentración?", "history": []}'
 ```
@@ -172,20 +176,17 @@ make start           # Start all services
 make stop            # Stop services  
 make restart         # Restart everything
 make logs            # Real-time logs
-```
-
-### Monitoring & Health
-```bash
-make check-db        # Check database connection
-make status          # Service status
-make test            # Run tests
+make status          # Check service status
 ```
 
 ### Data Management
 ```bash
-make sync-enhanced      # Enhanced sync with structured data (PRIMARY METHOD)
-make sync-new           # Sync only new data
-make watch-cannamente   # Auto-monitor for changes
+make sync-strains       # Sync strains from cannamente (PRIMARY METHOD)
+make test               # Run tests
+
+# Production deployment scripts:
+docker compose exec api python scripts/init_database.py      # Full initialization
+docker compose exec api python scripts/sync_daily.py        # Incremental sync
 ```
 
 ## 🏗 Enhanced Architecture
@@ -223,39 +224,39 @@ make watch-cannamente   # Auto-monitor for changes
 ### Health & Status
 ```bash
 # Health check
-curl http://localhost:8001/api/v1/ping/
+curl http://localhost:8000/api/v1/ping/
 
 # Metrics (Prometheus format)
-curl http://localhost:8001/metrics
+curl http://localhost:8000/metrics
 ```
 
 ### Strain API
 ```bash
 # List all strains with URLs
-curl http://localhost:8001/api/v1/strains/
+curl http://localhost:8000/api/v1/strains/
 
 # Get specific strain
-curl http://localhost:8001/api/v1/strains/1
+curl http://localhost:8000/api/v1/strains/1
 
 # Filter by query parameters
-curl "http://localhost:8001/api/v1/strains/?limit=10&skip=0"
+curl "http://localhost:8000/api/v1/strains/?limit=10&skip=0"
 ```
 
 ### Enhanced Chat API with Intent Detection
 
 ```bash
 # Sleep/Relaxation Query
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+curl -X POST http://localhost:8000/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "I need something for sleep", "history": []}'
 
 # Energy/Focus Query  
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+curl -X POST http://localhost:8000/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "I need energy and focus for work", "history": []}'
 
 # Pain Relief Query
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+curl -X POST http://localhost:8000/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "What helps with chronic pain?", "history": []}'
 ```
@@ -343,7 +344,7 @@ make check-db
 
 | Service | Port | Purpose | Environment Variable |
 |---------|------|---------|---------------------|
-| API Server | 8001 | Main application | `API_PORT` |
+| API Server | 8000 | Main application | `API_PORT` |
 | Metrics | 9091 | Prometheus metrics | `METRICS_EXTERNAL_PORT` |
 | Redis | 6380 | Caching layer | `REDIS_EXTERNAL_PORT` |
 | Local DB | 5433 | Application database | `DB_EXTERNAL_PORT` |
@@ -365,14 +366,14 @@ python -m pytest tests/ -v
 ### Manual Testing
 ```bash
 # Health check
-curl http://localhost:8001/api/v1/ping/
+curl http://localhost:8000/api/v1/ping/
 
 # Strain search
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+curl -X POST http://localhost:8000/api/v1/chat/ask/ \
   -d '{"message": "Best strain for creativity?"}'
 
 # URL verification
-curl http://localhost:8001/api/v1/strains/1 | jq '.url'
+curl http://localhost:8000/api/v1/strains/1 | jq '.url'
 ```
 
 ## 🛡 Security & Production
@@ -395,16 +396,16 @@ curl http://localhost:8001/api/v1/strains/1 | jq '.url'
 
 ## 🔄 Data Synchronization
 
-### Automatic Sync
+### Production-Ready Scripts
 ```bash
-# One-time enhanced sync from cannamente (RECOMMENDED)
-make sync-enhanced
+# Full database initialization (for deployment)
+docker compose exec api python scripts/init_database.py
 
-# Continuous monitoring (every 30 seconds) 
-make watch-cannamente
+# Daily incremental synchronization
+docker compose exec api python scripts/sync_daily.py
 
-# Background monitoring
-nohup make watch-cannamente > sync.log 2>&1 &
+# Regular sync via Makefile (uses sync_strain_relations.py)
+make sync-strains
 ```
 
 ### Data Flow
@@ -439,10 +440,11 @@ canagent/
 │       └── data_import.py # Sample data utilities
 ├── tests/                 # Test suite
 ├── scripts/               # Automation scripts
-│   ├── sync_strain_relations.py  # Enhanced sync with structured data (PRIMARY)
-│   ├── init_pgvector.sql         # Minimal pgvector initialization for production
-│   ├── check_db_connection.py    # Database health checks
-│   └── watch_cannamente.py       # Real-time sync monitoring
+│   ├── sync_strain_relations.py  # Full sync with structured data (working script)
+│   ├── init_database.py          # Production database initialization
+│   ├── sync_daily.py             # Daily incremental synchronization
+│   ├── common.py                 # Shared sync functions
+│   └── init_pgvector.sql         # pgvector extension setup
 ├── docker-compose.yml     # Docker configuration
 ├── Dockerfile            # Container definition
 ├── Makefile              # Command automation
@@ -493,7 +495,7 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ### Migration from v3.x
 - **Enhanced API**: Responses now include `detected_intent` and `filters_applied`
-- **New Command**: Use `make sync-enhanced` instead of `make sync-cannamente`
+- **New Scripts**: Use `init_database.py` for initialization, `sync_daily.py` for updates
 - **Rich Data**: Strain responses include feelings, helps_with, negatives, flavors
 - **Backwards Compatible**: All existing endpoints continue to work
 - **New Configuration**: Added `CANNAMENTE_BASE_URL` and `STRAIN_URL_PATTERN`
