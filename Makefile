@@ -13,9 +13,8 @@ help:
 	@echo "  migration    - Create new database migration"
 	@echo "  init-db      - Initialize database with migrations"
 
-	@echo "  sync-enhanced   - Enhanced sync with structured data (PRIMARY METHOD)"
-	@echo "  watch-cannamente - Watch for new strains and sync automatically"
-	@echo "  sync-new        - One-time sync of new strains"
+	@echo "  sync-strains    - Sync strains from cannamente (PRIMARY METHOD)"
+	@echo "  status          - Show service status"
 	@echo "  shell        - Open shell in API container"
 	@echo "  redis-cli    - Open Redis CLI"
 
@@ -103,30 +102,22 @@ freeze:
 
 # Check database connection
 check-db:
-	@echo "Checking connection to external database..."
-	python3 scripts/check_db_connection.py
+	@echo "Checking connection to database..."
+	@docker compose exec api python -c "from app.db.database import SessionLocal; from app.db.repository import StrainRepository; session = SessionLocal(); repo = StrainRepository(session); strains = repo.get_strains(limit=5); print(f'✅ Database OK - {len(strains)} strains available'); session.close()"
 
 # Show service status
 status:
 	@echo "Service Status:"
-	@echo "API: http://localhost:$${API_PORT:-8001}"
-	@echo "Metrics: http://localhost:$${METRICS_EXTERNAL_PORT:-9091}"
-	@echo "Redis: localhost:$${REDIS_EXTERNAL_PORT:-6380}"
-	@echo "External DB: localhost:$${CANNAMENTE_POSTGRES_PORT:-5432} (cannamente)"
-	@echo "Local DB: localhost:$${DB_EXTERNAL_PORT:-5433} (ai_budtender)"
+	@echo "API: http://localhost:8001"
+	@echo "Metrics: http://localhost:9091"
+	@echo "Redis: localhost:6380"
+	@echo "External DB: localhost:5432 (cannamente)"
+	@echo "Local DB: localhost:5433 (ai_budtender)"
+	@echo ""
+	@docker compose ps
 
-# Enhanced sync with structured data (feelings, helps_with, etc.) - PRIMARY METHOD
-sync-enhanced:
-	@echo "🔄 Enhanced sync with structured data from cannamente..."
+# Sync strains from cannamente - PRIMARY METHOD
+sync-strains:
+	@echo "🔄 Syncing strains with structured data from cannamente..."
 	@echo "This will sync feelings, helps_with, negatives, flavors and regenerate embeddings"
-	python3 scripts/sync_strain_relations.py
-
-# Watch for new strains and sync automatically
-watch-cannamente:
-	@echo "🔍 Starting watch mode for new strains..."
-	python3 scripts/watch_cannamente.py
-
-# One-time sync of new strains
-sync-new:
-	@echo "🔄 Syncing new strains from cannamente..."
-	python3 scripts/watch_cannamente.py --once 
+	docker compose exec api python scripts/sync_strain_relations.py 

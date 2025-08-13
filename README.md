@@ -54,7 +54,7 @@ make sync-strains     # Syncs feelings, effects, medical uses + embeddings
 
 ### Strain Recommendations
 ```bash
-curl -X POST http://localhost:8000/api/v1/chat/ask/ \
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "I need something for relaxation and sleep", "history": []}'
 ```
@@ -70,7 +70,7 @@ curl -X POST http://localhost:8000/api/v1/chat/ask/ \
       "thc": "18.50",
       "cbd": "0.10",
       "slug": "northern-lights",
-      "url": "http://localhost:8000/strain/northern-lights/",
+      "url": "http://localhost:8001/strain/northern-lights/",
       "description": "Classic indica strain. Strong relaxing effect...",
       "feelings": [{"name": "Sleepy", "energy_type": "relaxing"}],
       "helps_with": [{"name": "Insomnia"}]
@@ -87,16 +87,16 @@ curl -X POST http://localhost:8000/api/v1/chat/ask/ \
 ### Browse Strains
 ```bash
 # List all available strains
-curl http://localhost:8000/api/v1/strains/
+curl http://localhost:8001/api/v1/strains/
 
 # Get specific strain by ID
-curl http://localhost:8000/api/v1/strains/2
+curl http://localhost:8001/api/v1/strains/2
 ```
 
 ### Multi-language Support
 ```bash
 # Spanish Query (cannamente style)
-curl -X POST http://localhost:8000/api/v1/chat/ask/ \
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "¿Qué me recomiendas para creatividad y concentración?", "history": []}'
 ```
@@ -108,7 +108,7 @@ curl -X POST http://localhost:8000/api/v1/chat/ask/ \
 **Cannamente Integration:**
 ```env
 # Cannamente URL Configuration
-CANNAMENTE_BASE_URL=http://localhost:8000
+CANNAMENTE_BASE_URL=http://localhost:8001
 STRAIN_URL_PATTERN=/strain/{slug}/
 
 # Cannamente Database (External source database)
@@ -151,9 +151,9 @@ The system generates clickable strain URLs for cannamente integration:
 
 | Setting | Description | Example |
 |---------|-------------|---------|
-| `CANNAMENTE_BASE_URL` | Base URL for strain pages | `http://localhost:8000` |
+| `CANNAMENTE_BASE_URL` | Base URL for strain pages | `http://localhost:8001` |
 | `STRAIN_URL_PATTERN` | URL pattern with slug | `/strain/{slug}/` |
-| **Result** | Generated strain URL | `http://localhost:8000/strain/blue-dream/` |
+| **Result** | Generated strain URL | `http://localhost:8001/strain/blue-dream/` |
 
 **Custom Configuration Examples:**
 ```env
@@ -224,39 +224,39 @@ docker compose exec api python scripts/sync_daily.py        # Incremental sync
 ### Health & Status
 ```bash
 # Health check
-curl http://localhost:8000/api/v1/ping/
+curl http://localhost:8001/api/v1/ping/
 
 # Metrics (Prometheus format)
-curl http://localhost:8000/metrics
+curl http://localhost:8001/metrics
 ```
 
 ### Strain API
 ```bash
 # List all strains with URLs
-curl http://localhost:8000/api/v1/strains/
+curl http://localhost:8001/api/v1/strains/
 
 # Get specific strain
-curl http://localhost:8000/api/v1/strains/1
+curl http://localhost:8001/api/v1/strains/1
 
 # Filter by query parameters
-curl "http://localhost:8000/api/v1/strains/?limit=10&skip=0"
+curl "http://localhost:8001/api/v1/strains/?limit=10&skip=0"
 ```
 
 ### Enhanced Chat API with Intent Detection
 
 ```bash
 # Sleep/Relaxation Query
-curl -X POST http://localhost:8000/api/v1/chat/ask/ \
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "I need something for sleep", "history": []}'
 
 # Energy/Focus Query  
-curl -X POST http://localhost:8000/api/v1/chat/ask/ \
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "I need energy and focus for work", "history": []}'
 
 # Pain Relief Query
-curl -X POST http://localhost:8000/api/v1/chat/ask/ \
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "What helps with chronic pain?", "history": []}'
 ```
@@ -273,7 +273,7 @@ curl -X POST http://localhost:8000/api/v1/chat/ask/ \
       "thc": "18.50",
       "cbd": "0.10",
       "slug": "northern-lights",
-      "url": "http://localhost:8000/strain/northern-lights/",
+      "url": "http://localhost:8001/strain/northern-lights/",
       "feelings": [
         {"name": "Sleepy", "energy_type": "relaxing"},
         {"name": "Relaxed", "energy_type": "relaxing"}
@@ -344,7 +344,7 @@ make check-db
 
 | Service | Port | Purpose | Environment Variable |
 |---------|------|---------|---------------------|
-| API Server | 8000 | Main application | `API_PORT` |
+| API Server | 8001 | Main application | `API_PORT` |
 | Metrics | 9091 | Prometheus metrics | `METRICS_EXTERNAL_PORT` |
 | Redis | 6380 | Caching layer | `REDIS_EXTERNAL_PORT` |
 | Local DB | 5433 | Application database | `DB_EXTERNAL_PORT` |
@@ -366,14 +366,14 @@ python -m pytest tests/ -v
 ### Manual Testing
 ```bash
 # Health check
-curl http://localhost:8000/api/v1/ping/
+curl http://localhost:8001/api/v1/ping/
 
 # Strain search
-curl -X POST http://localhost:8000/api/v1/chat/ask/ \
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -d '{"message": "Best strain for creativity?"}'
 
 # URL verification
-curl http://localhost:8000/api/v1/strains/1 | jq '.url'
+curl http://localhost:8001/api/v1/strains/1 | jq '.url'
 ```
 
 ## 🛡 Security & Production
