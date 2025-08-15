@@ -4,7 +4,7 @@ from langchain.schema import Document
 from app.core.llm_interface import get_llm
 from app.core.intent_detection import IntentDetector, IntentType
 from app.db.repository import StrainRepository
-from app.models.schemas import Strain, ChatResponse, Feeling, HelpsWith, Negative, Flavor, Terpene
+from app.models.schemas import Strain, ChatResponse, CompactStrain, CompactFeeling, CompactHelpsWith, CompactNegative, CompactFlavor
 import os
 
 
@@ -131,7 +131,7 @@ Description: {strain.description or strain.text_content or 'No description'}"""
         # Get response from LLM
         response_text = self.llm_interface.generate_response(prompt)
         
-        # Build recommended strains list with full relations
+        # Build compact recommended strains list (optimized for cannamente UI)
         recommended_strains = []
         for doc in relevant_strain_docs:
             strain_id = doc.metadata.get("strain_id")
@@ -139,35 +139,31 @@ Description: {strain.description or strain.text_content or 'No description'}"""
             if strain_id:
                 strain = self.repository.get_strain_with_relations(strain_id)
                 if strain:
-                    strain_schema = Strain(
+                    # Create compact strain object - only essential fields for UI
+                    compact_strain = CompactStrain(
                         id=strain.id,
                         name=strain.name,
-                        title=strain.title,
-                        description=strain.description,
-                        text_content=strain.text_content,
-                        keywords=strain.keywords,
+                        description=strain.description,  # Brief description only
+                        
+                        # Essential cannabinoid info
                         cbd=strain.cbd,
                         thc=strain.thc,
                         cbg=strain.cbg,
-                        rating=strain.rating,
+                        
+                        # Core classification
                         category=strain.category,
-                        img=strain.img,
-                        img_alt_text=strain.img_alt_text,
-                        active=strain.active,
-                        top=strain.top,
-                        main=strain.main,
-                        is_review=strain.is_review,
+                        
+                        # Navigation & UI essentials
                         slug=strain.slug,
                         url=self._build_strain_url(strain.slug),
-                        created_at=strain.created_at,
-                        updated_at=strain.updated_at,
-                        feelings=[Feeling(id=f.id, name=f.name, energy_type=f.energy_type, created_at=f.created_at) for f in strain.feelings],
-                        helps_with=[HelpsWith(id=h.id, name=h.name, created_at=h.created_at) for h in strain.helps_with],
-                        negatives=[Negative(id=n.id, name=n.name, created_at=n.created_at) for n in strain.negatives],
-                        flavors=[Flavor(id=fl.id, name=fl.name, created_at=fl.created_at) for fl in strain.flavors],
-                        terpenes=[Terpene(id=t.id, name=t.name, description=t.description, created_at=t.created_at) for t in strain.terpenes]
+                        
+                        # Compact effects (only name and energy_type, no timestamps or IDs)
+                        feelings=[CompactFeeling(name=f.name, energy_type=f.energy_type) for f in strain.feelings],
+                        helps_with=[CompactHelpsWith(name=h.name) for h in strain.helps_with],
+                        negatives=[CompactNegative(name=n.name) for n in strain.negatives],
+                        flavors=[CompactFlavor(name=fl.name) for fl in strain.flavors]
                     )
-                    recommended_strains.append(strain_schema)
+                    recommended_strains.append(compact_strain)
         
         return ChatResponse(
             response=response_text,
@@ -198,6 +194,8 @@ Description: {strain.description or strain.text_content or 'No description'}"""
             text_parts.append(f"THC: {strain.thc}%")
         if strain.cbd:
             text_parts.append(f"CBD: {strain.cbd}%")
+        if strain.cbg:
+            text_parts.append(f"CBG: {strain.cbg}%")
         
         # Add effects and medical uses (MOST IMPORTANT for search)
         if strain.feelings:
@@ -207,6 +205,11 @@ Description: {strain.description or strain.text_content or 'No description'}"""
         if strain.helps_with:
             conditions = [h.name for h in strain.helps_with]
             text_parts.append(f"Helps with: {', '.join(conditions)}")
+        
+        # Add negative effects (important for filtering)
+        if strain.negatives:
+            negatives = [n.name for n in strain.negatives]
+            text_parts.append(f"Side effects: {', '.join(negatives)}")
         
         if strain.flavors:
             flavors = [f.name for f in strain.flavors]

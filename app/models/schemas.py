@@ -112,6 +112,45 @@ class Strain(StrainBase):
     model_config = {"from_attributes": True}
 
 
+# Compact schemas for chat API responses (optimized for cannamente UI)
+class CompactFeeling(BaseModel):
+    name: str = Field(..., description="Feeling name")
+    energy_type: str = Field(..., description="Energy type")
+
+class CompactHelpsWith(BaseModel):
+    name: str = Field(..., description="Medical condition")
+
+class CompactNegative(BaseModel):
+    name: str = Field(..., description="Side effect")
+
+class CompactFlavor(BaseModel):
+    name: str = Field(..., description="Flavor name")
+
+class CompactStrain(BaseModel):
+    """Optimized strain schema for chat API responses - excludes unnecessary fields"""
+    id: int
+    name: str = Field(..., description="Strain name")
+    description: Optional[str] = Field(None, description="Brief description")
+    
+    # Essential cannabinoid info
+    cbd: Optional[Decimal] = Field(None, description="CBD percentage")
+    thc: Optional[Decimal] = Field(None, description="THC percentage") 
+    cbg: Optional[Decimal] = Field(None, description="CBG percentage")
+    
+    # Core classification
+    category: Optional[str] = Field(None, description="Indica/Sativa/Hybrid")
+    
+    # Navigation & UI
+    slug: Optional[str] = Field(None, description="URL slug")
+    url: Optional[str] = Field(None, description="Direct strain page link")
+    
+    # Effects (compact - only essential fields)
+    feelings: List[CompactFeeling] = Field(default_factory=list, description="Effects")
+    helps_with: List[CompactHelpsWith] = Field(default_factory=list, description="Medical uses")
+    negatives: List[CompactNegative] = Field(default_factory=list, description="Side effects")
+    flavors: List[CompactFlavor] = Field(default_factory=list, description="Flavors")
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., description="User message") 
     history: Optional[List[str]] = Field(default=None, description="Message history")
@@ -119,7 +158,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="AI response")
-    recommended_strains: List[Strain] = Field(default_factory=list, description="Recommended strains")
+    recommended_strains: List[CompactStrain] = Field(default_factory=list, description="Recommended strains (optimized)")
     detected_intent: Optional[str] = Field(None, description="Detected user intent")
     filters_applied: Optional[dict] = Field(None, description="Applied filtering rules")
     

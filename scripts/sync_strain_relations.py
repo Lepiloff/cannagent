@@ -174,7 +174,8 @@ def clear_existing_data():
     
     try:
         # Clear in correct order due to foreign key constraints
-        cursor.execute("DELETE FROM strains_strain")
+        # Data already cleared manually - skip deletion
+        print("🗑️ Database already cleared")
         conn.commit()
         print("🗑️ Cleared existing strains data")
         

@@ -59,21 +59,25 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -d '{"message": "I need something for relaxation and sleep", "history": []}'
 ```
 
-**Enhanced Response with Intent Detection:**
+**Optimized Response Format for Cannamente UI:**
 ```json
 {
   "response": "I recommend Northern Lights for relaxation and sleep...",
   "recommended_strains": [
     {
-      "name": "Northern Lights",
-      "category": "Indica", 
-      "thc": "18.50",
+      "id": 42,
+      "name": "Northern Lights | Variedad de cannabis",
+      "description": "Classic indica strain for deep relaxation and sleep",
       "cbd": "0.10",
+      "thc": "18.50",
+      "cbg": "1.00",
+      "category": "Indica",
       "slug": "northern-lights",
       "url": "http://localhost:8001/strain/northern-lights/",
-      "description": "Classic indica strain. Strong relaxing effect...",
       "feelings": [{"name": "Sleepy", "energy_type": "relaxing"}],
-      "helps_with": [{"name": "Insomnia"}]
+      "helps_with": [{"name": "Insomnia"}],
+      "negatives": [{"name": "Dry mouth"}],
+      "flavors": [{"name": "earthy"}]
     }
   ],
   "detected_intent": "sleep",
@@ -261,19 +265,32 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -d '{"message": "What helps with chronic pain?", "history": []}'
 ```
 
-### Enhanced Response Format with Structured Data
+### Complete API Response Format (Optimized for Cannamente)
+
+**All fields returned in `recommended_strains` array:**
+
 ```json
 {
-  "response": "For sleep, I recommend Northern Lights...",
+  "response": "Based on your need for sleep, I recommend these Indica strains...",
   "recommended_strains": [
     {
-      "id": 2,
-      "name": "Northern Lights", 
-      "category": "Indica",
-      "thc": "18.50",
-      "cbd": "0.10",
+      "id": 123,
+      "name": "Northern Lights | Variedad de cannabis",
+      "description": "Classic indica strain known for deep relaxation and sleep",
+      
+      // Cannabinoid content
+      "cbd": "0.10",        // CBD percentage (can be null)
+      "thc": "18.50",       // THC percentage  
+      "cbg": "1.00",        // CBG percentage (can be null)
+      
+      // Classification
+      "category": "Indica", // Indica/Sativa/Hybrid
+      
+      // Navigation for cannamente UI
       "slug": "northern-lights",
       "url": "http://localhost:8001/strain/northern-lights/",
+      
+      // Effects and characteristics (arrays of objects)
       "feelings": [
         {"name": "Sleepy", "energy_type": "relaxing"},
         {"name": "Relaxed", "energy_type": "relaxing"}
@@ -295,11 +312,38 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   "detected_intent": "sleep",
   "filters_applied": {
     "preferred_categories": ["Indica"],
-    "required_feelings": ["Sleepy", "Relaxed", "Hungry"],
-    "exclude_feelings": ["Energetic", "Focused", "Talkative", "Uplifted"]
+    "required_feelings": ["Sleepy", "Relaxed"],
+    "exclude_feelings": ["Energetic", "Talkative"]
   }
 }
 ```
+
+### Field Reference for Cannamente Developers
+
+| Field | Type | Description | Example | Required |
+|-------|------|-------------|---------|----------|
+| `id` | integer | Unique strain identifier | `123` | ✅ |
+| `name` | string | Full strain name with branding | `"Northern Lights \| Variedad de cannabis"` | ✅ |
+| `description` | string/null | Brief strain description for UI | `"Classic indica strain..."` | ❌ |
+| `cbd` | string/null | CBD percentage as string | `"0.10"` or `null` | ❌ |
+| `thc` | string/null | THC percentage as string | `"18.50"` | ❌ |
+| `cbg` | string/null | CBG percentage as string | `"1.00"` or `null` | ❌ |
+| `category` | string/null | Strain type | `"Indica"`, `"Sativa"`, `"Hybrid"` | ❌ |
+| `slug` | string/null | URL-friendly identifier | `"northern-lights"` | ❌ |
+| `url` | string/null | Direct link to strain page | `"http://localhost:8001/strain/northern-lights/"` | ❌ |
+| `feelings` | array | Effects/sensations | `[{"name": "Sleepy", "energy_type": "relaxing"}]` | ✅ |
+| `helps_with` | array | Medical uses/conditions | `[{"name": "Insomnia"}]` | ✅ |
+| `negatives` | array | Side effects | `[{"name": "Dry mouth"}]` | ✅ |
+| `flavors` | array | Taste/aroma profiles | `[{"name": "earthy"}]` | ✅ |
+
+**Fields removed for optimization (not included):**
+- `title` - duplicated `name`
+- `text_content` - too large, use `description`
+- `keywords` - SEO metadata not needed for UI
+- `img`, `img_alt_text` - not synced from source
+- `rating`, `active`, `top`, `main`, `is_review` - internal flags
+- `created_at`, `updated_at` - timestamps (kept in DB for sync)
+- `id`, `created_at` in relations - unnecessary for UI display
 
 ### Intent Detection Examples
 
