@@ -66,8 +66,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   "recommended_strains": [
     {
       "id": 42,
-      "name": "Northern Lights | Variedad de cannabis",
-      "description": "Classic indica strain for deep relaxation and sleep",
+      "name": "Northern Lights",
       "cbd": "0.10",
       "thc": "18.50",
       "cbg": "1.00",
@@ -275,8 +274,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   "recommended_strains": [
     {
       "id": 123,
-      "name": "Northern Lights | Variedad de cannabis",
-      "description": "Classic indica strain known for deep relaxation and sleep",
+      "name": "Northern Lights",
       
       // Cannabinoid content
       "cbd": "0.10",        // CBD percentage (can be null)
@@ -323,8 +321,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 | Field | Type | Description | Example | Required |
 |-------|------|-------------|---------|----------|
 | `id` | integer | Unique strain identifier | `123` | ✅ |
-| `name` | string | Full strain name with branding | `"Northern Lights \| Variedad de cannabis"` | ✅ |
-| `description` | string/null | Brief strain description for UI | `"Classic indica strain..."` | ❌ |
+| `name` | string | Clean strain name only | `"Northern Lights"` | ✅ |
 | `cbd` | string/null | CBD percentage as string | `"0.10"` or `null` | ❌ |
 | `thc` | string/null | THC percentage as string | `"18.50"` | ❌ |
 | `cbg` | string/null | CBG percentage as string | `"1.00"` or `null` | ❌ |

@@ -147,8 +147,7 @@ Project Structure Analysis: AI Budtender 🌿
     "recommended_strains": [
       {
         "id": 42,
-        "name": "Northern Lights | Variedad de cannabis",
-        "description": "Classic indica strain for deep relaxation and sleep",
+        "name": "Northern Lights",
         "cbd": "0.10", "thc": "18.50", "cbg": "1.00",
         "category": "Indica",
         "slug": "northern-lights",

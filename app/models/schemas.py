@@ -130,7 +130,6 @@ class CompactStrain(BaseModel):
     """Optimized strain schema for chat API responses - excludes unnecessary fields"""
     id: int
     name: str = Field(..., description="Strain name")
-    description: Optional[str] = Field(None, description="Brief description")
     
     # Essential cannabinoid info
     cbd: Optional[Decimal] = Field(None, description="CBD percentage")

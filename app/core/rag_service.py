@@ -132,10 +132,12 @@ Description: {strain.description or strain.text_content or 'No description'}"""
                 strain = self.repository.get_strain_with_relations(strain_id)
                 if strain:
                     # Create compact strain object - only essential fields for UI
+                    # Clean strain name by removing "| Variedad de cannabis" suffix
+                    clean_name = strain.name.split(' | ')[0] if strain.name else strain.name
+                    
                     compact_strain = CompactStrain(
                         id=strain.id,
-                        name=strain.name,
-                        description=strain.description,  # Brief description only
+                        name=clean_name,
                         
                         # Essential cannabinoid info
                         cbd=strain.cbd,
