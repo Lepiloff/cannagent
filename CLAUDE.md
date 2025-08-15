@@ -152,10 +152,26 @@ Project Structure Analysis: AI Budtender 🌿
         "category": "Indica",
         "slug": "northern-lights",
         "url": "http://localhost:8001/strain/northern-lights/",
-        "feelings": [{"name": "Sleepy", "energy_type": "relaxing"}],
-        "helps_with": [{"name": "Insomnia"}],
-        "negatives": [{"name": "Dry mouth"}],
-        "flavors": [{"name": "earthy"}]
+        "feelings": [
+          {"name": "Sleepy", "energy_type": "relaxing"},
+          {"name": "Relaxed", "energy_type": "relaxing"},
+          {"name": "Hungry", "energy_type": "relaxing"}
+        ],
+        "helps_with": [
+          {"name": "Insomnia"},
+          {"name": "Stress"}, 
+          {"name": "Pain"}
+        ],
+        "negatives": [
+          {"name": "Dry mouth"},
+          {"name": "Dry eyes"},
+          {"name": "Dizzy"}
+        ],
+        "flavors": [
+          {"name": "earthy"},
+          {"name": "pine"},
+          {"name": "sweet"}
+        ]
       }
     ],
     "detected_intent": "sleep",
