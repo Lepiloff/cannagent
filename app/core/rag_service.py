@@ -16,27 +16,19 @@ class RAGService:
         self.llm_interface = get_llm()
         self.intent_detector = IntentDetector()
         
-        # Simplified prompt template - let structured filtering do the heavy lifting
+        # Concise prompt template - avoid redundant descriptions
         self.prompt_template = PromptTemplate(
             input_variables=["query", "context", "history", "intent", "filters_applied"],
             template="""
-You are AI Budtender, an expert cannabis consultant specializing in strain recommendations.
-
-Conversation history:
-{history}
+You are AI Budtender, an expert cannabis consultant.
 
 User query: {query}
-Detected intent: {intent}
-Filters applied: {filters_applied}
+Intent: {intent}
+History: {history}
 
-Pre-selected suitable strains:
-{context}
+Selected strains: {context}
 
-These strains have already been filtered based on your specific needs. 
-Explain why each strain is a good match and provide helpful guidance for selection.
-Focus on the specific benefits that align with the user's request.
-
-Response should be friendly, informative and educational.
+Provide a brief response (1-2 sentences) explaining why these strains match the user's needs. Don't describe individual strain properties - the strain details are already provided separately.
 """
         )
     
