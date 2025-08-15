@@ -153,9 +153,9 @@ Project Structure Analysis: AI Budtender 🌿
         "slug": "northern-lights",
         "url": "http://localhost:8001/strain/northern-lights/",
         "feelings": [
-          {"name": "Sleepy", "energy_type": "relaxing"},
-          {"name": "Relaxed", "energy_type": "relaxing"},
-          {"name": "Hungry", "energy_type": "relaxing"}
+          {"name": "Sleepy"},
+          {"name": "Relaxed"},
+          {"name": "Hungry"}
         ],
         "helps_with": [
           {"name": "Insomnia"},

@@ -151,8 +151,8 @@ Description: {strain.description or strain.text_content or 'No description'}"""
                         slug=strain.slug,
                         url=self._build_strain_url(strain.slug),
                         
-                        # Compact effects (only name and energy_type, no timestamps or IDs)
-                        feelings=[CompactFeeling(name=f.name, energy_type=f.energy_type) for f in strain.feelings],
+                        # Compact effects (only name, no energy_type to avoid UI redundancy)
+                        feelings=[CompactFeeling(name=f.name) for f in strain.feelings],
                         helps_with=[CompactHelpsWith(name=h.name) for h in strain.helps_with],
                         negatives=[CompactNegative(name=n.name) for n in strain.negatives],
                         flavors=[CompactFlavor(name=fl.name) for fl in strain.flavors]

@@ -115,7 +115,6 @@ class Strain(StrainBase):
 # Compact schemas for chat API responses (optimized for cannamente UI)
 class CompactFeeling(BaseModel):
     name: str = Field(..., description="Feeling name")
-    energy_type: str = Field(..., description="Energy type")
 
 class CompactHelpsWith(BaseModel):
     name: str = Field(..., description="Medical condition")

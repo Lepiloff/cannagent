@@ -74,9 +74,9 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       "slug": "northern-lights",
       "url": "http://localhost:8001/strain/northern-lights/",
       "feelings": [
-        {"name": "Sleepy", "energy_type": "relaxing"},
-        {"name": "Relaxed", "energy_type": "relaxing"},
-        {"name": "Hungry", "energy_type": "relaxing"}
+        {"name": "Sleepy"},
+        {"name": "Relaxed"},
+        {"name": "Hungry"}
       ],
       "helps_with": [
         {"name": "Insomnia"},
@@ -306,9 +306,9 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       
       // Effects and characteristics (arrays of objects with multiple values)
       "feelings": [
-        {"name": "Sleepy", "energy_type": "relaxing"},
-        {"name": "Relaxed", "energy_type": "relaxing"},
-        {"name": "Hungry", "energy_type": "relaxing"}
+        {"name": "Sleepy"},
+        {"name": "Relaxed"},
+        {"name": "Hungry"}
       ],
       "helps_with": [
         {"name": "Insomnia"},
@@ -348,7 +348,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 | `category` | string/null | Strain type | `"Indica"`, `"Sativa"`, `"Hybrid"` | ❌ |
 | `slug` | string/null | URL-friendly identifier | `"northern-lights"` | ❌ |
 | `url` | string/null | Direct link to strain page | `"http://localhost:8001/strain/northern-lights/"` | ❌ |
-| `feelings` | array | Effects/sensations (typically 2-4 items) | `[{"name": "Sleepy", "energy_type": "relaxing"}, {...}]` | ✅ |
+| `feelings` | array | Effects/sensations (typically 2-4 items) | `[{"name": "Sleepy"}, {"name": "Relaxed"}, {...}]` | ✅ |
 | `helps_with` | array | Medical uses/conditions (typically 2-4 items) | `[{"name": "Insomnia"}, {"name": "Stress"}, {...}]` | ✅ |
 | `negatives` | array | Side effects (typically 2-4 items) | `[{"name": "Dry mouth"}, {"name": "Dry eyes"}, {...}]` | ✅ |
 | `flavors` | array | Taste/aroma profiles (typically 2-4 items) | `[{"name": "earthy"}, {"name": "pine"}, {...}]` | ✅ |
