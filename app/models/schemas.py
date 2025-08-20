@@ -152,6 +152,8 @@ class CompactStrain(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="User message") 
     history: Optional[List[str]] = Field(default=None, description="Message history")
+    session_id: Optional[str] = Field(default=None, description="Session identifier for context continuity")
+    source_platform: Optional[str] = Field(default=None, description="Source platform for analytics")
 
 
 class ChatResponse(BaseModel):
@@ -159,6 +161,18 @@ class ChatResponse(BaseModel):
     recommended_strains: List[CompactStrain] = Field(default_factory=list, description="Recommended strains (optimized)")
     detected_intent: Optional[str] = Field(None, description="Detected user intent")
     filters_applied: Optional[dict] = Field(None, description="Applied filtering rules")
+    
+    # Enhanced context-aware fields
+    session_id: Optional[str] = Field(None, description="Session identifier")
+    query_type: Optional[str] = Field(None, description="Query type: new_search|follow_up|comparison|reset|clarification")
+    language: Optional[str] = Field(None, description="Detected language (es/en)")
+    confidence: Optional[float] = Field(None, description="Analysis confidence (0.0-1.0)")
+    quick_actions: Optional[List[str]] = Field(None, description="Dynamic quick action suggestions")
+    
+    # Status indicators
+    is_restored: bool = Field(default=False, description="Whether session was restored")
+    is_fallback: bool = Field(default=False, description="Whether fallback analysis was used")
+    warnings: Optional[List[str]] = Field(None, description="Any warnings or conflicts detected")
     
     
 class HealthResponse(BaseModel):

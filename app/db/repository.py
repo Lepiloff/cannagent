@@ -378,4 +378,76 @@ class StrainRepository:
         
         self.db.commit()
         self.db.refresh(strain)
-        return strain 
+        return strain
+    
+    def search_strains_with_filters(
+        self, 
+        query: str, 
+        filters: Dict[str, Any], 
+        limit: int = 5
+    ) -> List[StrainModel]:
+        """Search strains with combined filters and query"""
+        
+        # Start with base query
+        query_obj = self.db.query(StrainModel).options(
+            joinedload(StrainModel.feelings),
+            joinedload(StrainModel.helps_with),
+            joinedload(StrainModel.negatives),
+            joinedload(StrainModel.flavors)
+        )
+        
+        # Apply filters if provided
+        if filters:
+            # Category filter
+            if 'preferred_categories' in filters:
+                categories = filters['preferred_categories']
+                if categories:
+                    query_obj = query_obj.filter(StrainModel.category.in_(categories))
+            
+            # Effects filter
+            if 'effects' in filters:
+                effects = filters['effects']
+                
+                # Required effects
+                if effects.get('desired'):
+                    for effect in effects['desired']:
+                        query_obj = query_obj.join(StrainModel.feelings).filter(
+                            Feeling.name == effect
+                        )
+                
+                # Avoid effects  
+                if effects.get('avoid'):
+                    for effect in effects['avoid']:
+                        # Subquery to exclude strains with these effects
+                        exclude_subquery = self.db.query(StrainModel.id).join(
+                            StrainModel.feelings
+                        ).filter(Feeling.name == effect).subquery()
+                        
+                        query_obj = query_obj.filter(
+                            ~StrainModel.id.in_(exclude_subquery)
+                        )
+            
+            # Potency filter
+            if 'potency' in filters and filters['potency'].get('thc'):
+                thc_pref = filters['potency']['thc']
+                if thc_pref == 'higher':
+                    query_obj = query_obj.filter(StrainModel.thc >= 15.0)
+                elif thc_pref == 'lower':
+                    query_obj = query_obj.filter(StrainModel.thc < 15.0)
+        
+        # Execute query with limit
+        strains = query_obj.limit(limit).all()
+        
+        return strains
+    
+    def search_strains_by_name(self, name: str) -> List[StrainModel]:
+        """Search strains by name (partial match)"""
+        
+        return self.db.query(StrainModel).options(
+            joinedload(StrainModel.feelings),
+            joinedload(StrainModel.helps_with),
+            joinedload(StrainModel.negatives),
+            joinedload(StrainModel.flavors)
+        ).filter(
+            StrainModel.name.ilike(f"%{name}%")
+        ).limit(5).all() 

@@ -5,6 +5,7 @@ from typing import Optional, Any, List
 from aiocache import Cache
 from aiocache.serializers import JsonSerializer
 from app.core.logging import get_logger
+import redis
 
 logger = get_logger(__name__)
 
@@ -102,4 +103,14 @@ class CacheService:
 
 
 # Global cache instance
-cache_service = CacheService() 
+cache_service = CacheService()
+
+
+def get_redis() -> redis.Redis:
+    """Get synchronous Redis client for session management"""
+    return redis.Redis(
+        host=os.getenv('REDIS_HOST', 'redis'),
+        port=int(os.getenv('REDIS_PORT', '6379')),
+        db=int(os.getenv('REDIS_DB', '0')),
+        decode_responses=True  # Автоматически декодировать ответы как строки
+    ) 

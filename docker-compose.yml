@@ -59,6 +59,14 @@ services:
       - LOG_FORMAT=json
       - RATE_LIMIT_REQUESTS=100
       - RATE_LIMIT_PERIOD=60
+      # Context-Aware Architecture v2.0
+      - USE_CONTEXTUAL_RAG=true
+      - UNIFIED_LLM_TIMEOUT=${UNIFIED_LLM_TIMEOUT:-3000}
+      - FALLBACK_ON_TIMEOUT=${FALLBACK_ON_TIMEOUT:-true}
+      - SESSION_TTL_HOURS=${SESSION_TTL_HOURS:-4}
+      - SESSION_BACKUP_DAYS=${SESSION_BACKUP_DAYS:-7}
+      - EMBEDDING_CACHE_TTL=${EMBEDDING_CACHE_TTL:-86400}
+      - QUERY_EMBEDDING_CACHE_TTL=${QUERY_EMBEDDING_CACHE_TTL:-3600}
     volumes:
       - ./app:/app/app
       - ./alembic:/app/alembic
