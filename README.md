@@ -86,7 +86,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       "cbg": "1.00",
       "category": "Indica",
       "slug": "northern-lights",
-      "url": "http://localhost:8001/strain/northern-lights/",
+      "url": "http://localhost:8000/strain/northern-lights/",
       "feelings": [
         {"name": "Sleepy"},
         {"name": "Relaxed"},
@@ -161,7 +161,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 **Cannamente Integration:**
 ```env
 # Cannamente URL Configuration
-CANNAMENTE_BASE_URL=http://localhost:8001
+CANNAMENTE_BASE_URL=http://localhost:8000
 STRAIN_URL_PATTERN=/strain/{slug}/
 
 # Cannamente Database (External source database)
@@ -213,9 +213,9 @@ The system generates clickable strain URLs for cannamente integration:
 
 | Setting | Description | Example |
 |---------|-------------|---------|
-| `CANNAMENTE_BASE_URL` | Base URL for strain pages | `http://localhost:8001` |
+| `CANNAMENTE_BASE_URL` | Base URL for strain pages | `http://localhost:8000` |
 | `STRAIN_URL_PATTERN` | URL pattern with slug | `/strain/{slug}/` |
-| **Result** | Generated strain URL | `http://localhost:8001/strain/blue-dream/` |
+| **Result** | Generated strain URL | `http://localhost:8000/strain/blue-dream/` |
 
 **Custom Configuration Examples:**
 ```env
@@ -366,7 +366,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       
       // Navigation for cannamente UI
       "slug": "northern-lights",
-      "url": "http://localhost:8001/strain/northern-lights/",
+      "url": "http://localhost:8000/strain/northern-lights/",
       
       // Effects and characteristics (arrays of objects with multiple values)
       "feelings": [
@@ -411,7 +411,7 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 | `cbg` | string/null | CBG percentage as string | `"1.00"` or `null` | ❌ |
 | `category` | string/null | Strain type | `"Indica"`, `"Sativa"`, `"Hybrid"` | ❌ |
 | `slug` | string/null | URL-friendly identifier | `"northern-lights"` | ❌ |
-| `url` | string/null | Direct link to strain page | `"http://localhost:8001/strain/northern-lights/"` | ❌ |
+| `url` | string/null | Direct link to strain page | `"http://localhost:8000/strain/northern-lights/"` | ❌ |
 | `feelings` | array | Effects/sensations (typically 2-4 items) | `[{"name": "Sleepy"}, {"name": "Relaxed"}, {...}]` | ✅ |
 | `helps_with` | array | Medical uses/conditions (typically 2-4 items) | `[{"name": "Insomnia"}, {"name": "Stress"}, {...}]` | ✅ |
 | `negatives` | array | Side effects (typically 2-4 items) | `[{"name": "Dry mouth"}, {"name": "Dry eyes"}, {...}]` | ✅ |

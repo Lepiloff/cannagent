@@ -480,7 +480,7 @@ class OptimizedContextualRAGService:
         """Построение URL для сорта"""
         if not strain_slug:
             return None
-        base_url = os.getenv('CANNAMENTE_BASE_URL', 'http://localhost:8001')
+        base_url = os.getenv('CANNAMENTE_BASE_URL')
         url_pattern = os.getenv('STRAIN_URL_PATTERN', '/strain/{slug}/')
         return f"{base_url}{url_pattern.format(slug=strain_slug)}"
     
