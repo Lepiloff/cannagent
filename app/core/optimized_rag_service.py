@@ -146,7 +146,10 @@ class OptimizedContextualRAGService:
         if analysis.query_type == 'follow_up':
             # Работаем с существующими сортами
             strain_ids = session.get_last_strains()
+            logger.info(f"Follow-up: session has {len(session.recommended_strains_history)} strain groups")
+            logger.info(f"Follow-up: last strain IDs: {strain_ids}")
             if not strain_ids:
+                logger.warning("Follow-up: No strains in session context!")
                 return []
             
             strains = []
@@ -155,9 +158,16 @@ class OptimizedContextualRAGService:
                 if strain:
                     strains.append(strain)
             
-            # Применяем фильтры если есть в анализе
-            if analysis.criteria:
-                strains = self._apply_criteria_filters(strains, analysis.criteria)
+            # Для follow-up запросов НЕ применяем фильтрацию - пользователь работает с уже найденными сортами
+            # Применяем только сортировку если нужно, но не исключаем сорта из контекста
+            if analysis.criteria and analysis.criteria.get('potency'):
+                potency_pref = analysis.criteria['potency'].get('thc')
+                if potency_pref == 'higher':
+                    strains.sort(key=lambda s: float(s.thc) if s.thc else 0, reverse=True)
+                elif potency_pref == 'lower':
+                    strains.sort(key=lambda s: float(s.thc) if s.thc else 0)
+            
+            # НЕ применяем _apply_criteria_filters для follow-up запросов
             
             logger.info(f"Follow-up processing: {len(strains)} strains from context")
             return strains
@@ -376,7 +386,9 @@ class OptimizedContextualRAGService:
         # Добавляем рекомендации в историю
         if strains:
             strain_ids = [s.id for s in strains]
+            logger.info(f"Saving {len(strain_ids)} strains to session: {strain_ids}")
             session.add_strain_recommendation(strain_ids)
+            logger.info(f"Session now has {len(session.recommended_strains_history)} strain groups")
         
         # Обновляем тему разговора
         if analysis.query_type == 'new_search' and analysis.criteria:

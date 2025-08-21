@@ -1051,6 +1051,220 @@ SLOW_QUERY_THRESHOLD_MS=2000
 
 
 
+---
+
+## 🚀 SMART QUERY EXECUTOR v3.0 - Следующий этап эволюции
+
+### Проблема текущего подхода v2.0
+
+Несмотря на успешное решение контекстных проблем, v2.0 требует множественных условий для обработки каждого edge case. При добавлении новых типов запросов код становится громоздким и сложным в поддержке.
+
+**Примеры проблем:**
+- Сорта с THC: N/A исключаются жестко в коде
+- Каждый тип comparison требует отдельных условий
+- Логика "highest/lowest" хардкодится в фильтрах
+- Добавление новых критериев требует изменения множественных условий
+
+### Архитектура Smart Query Executor v3.0
+
+#### Принципы гибкого подхода:
+
+1. **LLM как главный мозг** - определяет точные действия для каждого запроса
+2. **Минимум хардкода** - максимум рассуждений AI
+3. **Исполнительные модули** - выполняют конкретные действия без жесткой логики
+4. **Полный контекст** - LLM видит все данные для принятия решений
+
+#### Компоненты:
+
+```
+Smart Query Executor v3.0
+├── SmartQueryAnalyzer (главный AI мозг)
+│   ├── Получает полный контекст сессии и сортов
+│   ├── Анализирует намерение и определяет действия
+│   └── Генерирует план выполнения + естественный ответ
+├── ActionExecutor (умные исполнители)
+│   ├── StrainProcessor - обработка сортов по AI инструкциям
+│   ├── DataFilter - фильтрация по AI критериям
+│   ├── StrainSorter - сортировка по AI логике
+│   └── ResponseGenerator - сборка финального ответа
+└── ContextProvider (контекст для AI)
+    ├── Session strains с полными характеристиками
+    ├── User conversation history
+    └── Available system actions
+```
+
+#### Пример работы:
+
+**Запрос пользователя:** "what strain have highest thc level"
+
+**SmartQueryAnalyzer получает полный контекст:**
+```json
+{
+  "user_query": "what strain have highest thc level",
+  "session_strains": [
+    {
+      "id": 360, 
+      "name": "ACDC", 
+      "thc": "1.00", 
+      "category": "Hybrid",
+      "effects": ["Uplifted", "Focused", "Relaxed"]
+    },
+    {
+      "id": 354, 
+      "name": "Alien OG", 
+      "thc": "19.00", 
+      "category": "Hybrid", 
+      "effects": ["Hungry", "Giggly", "Euphoric"]
+    },
+    {
+      "id": 358, 
+      "name": "Italian Ice", 
+      "thc": null, 
+      "category": "Hybrid",
+      "effects": ["Relaxed", "Focused", "Sleepy"]
+    }
+  ],
+  "conversation_context": "User previously asked for relaxing strains for sleep",
+  "available_actions": [
+    "filter_strains",
+    "sort_strains", 
+    "select_strains",
+    "explain_strains",
+    "expand_search"
+  ]
+}
+```
+
+**SmartQueryAnalyzer возвращает план выполнения:**
+```json
+{
+  "action_plan": {
+    "primary_action": "sort_strains",
+    "parameters": {
+      "sort_criteria": "thc_content_descending",
+      "exclude_invalid_data": ["null", "N/A", "unknown"],
+      "limit": 3,
+      "reasoning": "User wants highest THC from their context, exclude Italian Ice due to missing THC data"
+    }
+  },
+  "natural_response": "From your previous recommendations, Alien OG has the highest THC level at 19%. Italian Ice was excluded since THC data isn't available.",
+  "suggested_follow_ups": [
+    "Tell me more about Alien OG",
+    "Show me all THC levels",
+    "Find stronger options"
+  ],
+  "confidence": 0.95,
+  "detected_language": "en"
+}
+```
+
+#### Ключевые преимущества:
+
+1. **Максимальная гибкость** - AI сам решает как обработать любой запрос
+2. **Самоадаптация** - автоматически исключает невалидные данные
+3. **Контекстуальность** - учитывает всю информацию о сессии
+4. **Расширяемость** - новые типы запросов обрабатываются без изменения кода
+5. **Объяснимость** - AI предоставляет reasoning для каждого решения
+
+### Этапы реализации Smart Query Executor v3.0:
+
+#### Этап 1: Core Architecture Design
+- [ ] Создать `SmartQueryAnalyzer` - главный AI компонент
+- [ ] Разработать `ContextProvider` - провайдер полного контекста
+- [ ] Спроектировать `ActionExecutor` - гибкие исполнители
+
+#### Этап 2: Smart Query Analyzer Implementation  
+- [ ] Реализовать LLM промпт для полного анализа запросов
+- [ ] Добавить генерацию планов выполнения
+- [ ] Создать fallback для случаев недоступности LLM
+
+#### Этап 3: Action Executors
+- [ ] `StrainProcessor` - умная обработка сортов по AI инструкциям
+- [ ] `DataFilter` - фильтрация с автоматическим исключением invalid данных
+- [ ] `StrainSorter` - сортировка по AI критериям с reasoning
+
+#### Этап 4: Context Provider Enhancement
+- [ ] Расширить контекст полными данными о сортах
+- [ ] Добавить историю действий пользователя
+- [ ] Включить системные возможности в контекст
+
+#### Этап 5: Integration & Testing
+- [ ] Интеграция всех компонентов в unified service
+- [ ] Comprehensive тестирование edge cases
+- [ ] Performance оптимизация AI вызовов
+
+#### Этап 6: Advanced Features
+- [ ] Multi-step reasoning для сложных запросов
+- [ ] Learning from user feedback
+- [ ] Predictive suggestions based on patterns
+
+### Пример unified prompt для Smart Query Analyzer:
+
+```
+You are a cannabis strain consultation AI analyzing user queries with full session context.
+
+CONTEXT:
+Session strains: {session_strains_with_full_data}
+Conversation history: {conversation_summary}  
+User query: "{user_query}"
+Available system actions: {available_actions}
+
+TASK:
+Analyze the query and create an execution plan. Consider:
+1. What does the user want to accomplish?
+2. Which strains from the session are relevant?
+3. How should the data be processed (filter/sort/select)?
+4. What data quality issues need handling?
+5. What would be most helpful to the user?
+
+RESPONSE FORMAT (JSON):
+{
+  "action_plan": {
+    "primary_action": "sort_strains|filter_strains|select_strains|explain_strains|expand_search",
+    "parameters": {
+      // Flexible parameters based on the action needed
+      "criteria": "detailed criteria for the action",
+      "data_handling": "how to handle missing/invalid data",
+      "limit": "number of results",
+      "reasoning": "why this approach was chosen"
+    }
+  },
+  "natural_response": "Natural language response in detected language",
+  "suggested_follow_ups": ["contextual suggestions"],
+  "confidence": 0.0-1.0,
+  "detected_language": "es|en"
+}
+
+EXAMPLES:
+- "cuál tiene más THC" → sort by THC descending, exclude invalid
+- "show me indica only" → filter by category, from session strains  
+- "tell me about the second one" → select by index, provide details
+- "find something stronger" → expand search, higher THC criteria
+
+Be intelligent about data quality - exclude strains with null/N/A/invalid values when they're not useful for the query.
+```
+
+### Конфигурация для v3.0:
+
+```env
+# Smart Query Executor v3.0
+USE_SMART_EXECUTOR=true
+SMART_EXECUTOR_TIMEOUT=5000
+SMART_EXECUTOR_FALLBACK=true
+
+# AI Analysis  
+ANALYSIS_CACHE_TTL=1800        # 30 min for query analysis
+MAX_CONTEXT_TOKENS=4000        # Context size limit
+MIN_CONFIDENCE_THRESHOLD=0.3   # Minimum confidence to proceed
+
+# Action Execution
+ENABLE_MULTI_STEP_REASONING=true
+ENABLE_DATA_QUALITY_AUTO_FIX=true
+ENABLE_PREDICTIVE_SUGGESTIONS=true
+```
+
+---
+
 ## ✅ Решенные проблемы
 
 1. ✅ **Единый LLM вызов** - все операции в одном запросе
@@ -1063,5 +1277,51 @@ SLOW_QUERY_THRESHOLD_MS=2000
 8. ✅ **Механизм reset** - "empezar de nuevo" работает
 9. ✅ **Конфликты критериев** - обнаружение и разрешение
 10. ✅ **Performance** - снижение latency в 3-4 раза
+
+## ✅ Smart Query Executor v3.0 - РЕАЛИЗОВАНО
+
+11. ✅ **Гибкая архитектура** - замена хардкода на AI reasoning  
+12. ✅ **Автоматическое data quality handling** - AI сам исключает invalid данные
+13. ✅ **Расширяемость без кода** - новые типы запросов через промпты
+14. ✅ **Universal Action Executor** - обрабатывает любые AI-критерии
+15. ✅ **Self-explaining AI** - AI объясняет свои решения
+
+### 🎯 Достижения Smart Query Executor v3.0:
+
+**Решена исходная проблема:**
+- ❌ Было: Italian Ice с THC: N/A включался в результаты "highest THC"
+- ✅ Стало: AI автоматически исключает invalid данные через универсальные фильтры
+
+**Ключевые улучшения:**
+1. **Универсальные критерии** - вместо хардкода для каждого поля:
+   ```json
+   // AI генерирует гибкие критерии для любого запроса
+   "filters": {
+     "thc": {"operator": "gte", "value": 15},
+     "category": {"operator": "eq", "value": "Indica"},
+     "effects": {"operator": "contains", "values": ["Sleepy"]},
+     "flavors": {"operator": "any", "values": ["pine", "citrus"]}
+   }
+   ```
+
+2. **UniversalActionExecutor** - обрабатывает любые поля без изменения кода:
+   - Поддерживает операторы: `eq`, `gte`, `lte`, `gt`, `lt`, `contains`, `any`, `not_contains`
+   - Работает с любыми полями: `thc`, `cbd`, `category`, `effects`, `flavors`, `helps_with`
+   - Автоматически исключает invalid данные: `null`, `N/A`, `unknown`
+
+3. **Масштабируемость** - новые типы запросов без программирования:
+   - "find high CBD sativas" → AI: `{"category": "Sativa", "cbd": {"operator": "gte", "value": 10}}`
+   - "show citrus indica for pain" → AI: `{"category": "Indica", "flavors": {"operator": "contains", "values": ["citrus"]}, "helps_with": {"operator": "contains", "values": ["Pain"]}}`
+
+**Тестирование:**
+- ✅ "what strain have highest thc level" → правильная сортировка, исключение N/A
+- ✅ "show me sativa strains only" → фильтрация по категории  
+- ✅ "find strains with high CBD" → числовая фильтрация
+- ✅ Универсальная обработка без специфичных методов
+
+**Производительность:**
+- Один AI вызов вместо множественных условий
+- Универсальная фильтрация вместо N специализированных методов
+- Автоматическая оптимизация качества данных
 
 

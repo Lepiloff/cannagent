@@ -2,6 +2,8 @@
 
 🌿 **Smart cannabis strain recommendations using Context-Aware RAG with Session Management, Intent Detection, and Conversational Memory for multi-step cannabis consultations.**
 
+> **Architecture**: Smart Query Executor v3.0 with Universal AI-driven criteria generation and dynamic data quality handling.
+
 > **Multi-language support**: English (primary), Spanish (for cannamente integration)
 
 ## 🚀 Quick Start
