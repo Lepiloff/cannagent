@@ -4,10 +4,8 @@ Legacy product import functions have been replaced by sync_strain_relations.py
 """
 
 from typing import List, Dict, Any
-from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
 from app.db.repository import StrainRepository
-from app.core.rag_service import RAGService
 
 
 def create_sample_strains() -> List[Dict[str, Any]]:

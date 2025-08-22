@@ -89,11 +89,12 @@ class UniversalActionExecutor:
             # Применяем обычные фильтры
             scored_strains = [(strain, 1.0) for strain in self._apply_universal_filters(all_strains, filters)]
         
-        # For medical queries with weighted_priority, always sort by score first
+        # Медицинские queries: сначала по медицинскому score, затем по числовым критериям
         if scoring.get("method") == "weighted_priority":
-            # Sort by medical score first (highest score = best medical match)
+            # Sort by medical score first, then apply secondary numerical sorting
             sorted_strains = sorted(scored_strains, key=lambda x: x[1], reverse=True)
-            logger.info(f"Sorted by weighted priority score: {[(s[0].name, round(s[1], 3)) for s in sorted_strains[:3]]}")
+            sorted_strains = self._apply_secondary_numerical_sorting(sorted_strains, filters)
+            logger.info(f"Medical + numerical sorted results: {[(s[0].name, round(s[1], 3)) for s in sorted_strains[:3]]}")
         elif sort_config.get("field") == "score":
             sorted_strains = sorted(scored_strains, key=lambda x: x[1], reverse=(sort_config.get("order", "desc") == "desc"))
         else:
@@ -485,45 +486,287 @@ class UniversalActionExecutor:
         
         for strain in strains:
             total_score = self._calculate_strain_priority_score(strain, filters)
-            # Allow negative scores - medical penalties still rank better than worst options
             scored_strains.append((strain, total_score))
         
-        logger.info(f"Weighted priority scoring: {len(scored_strains)} qualifying strains")
+        logger.info(f"Applied weighted priority scoring: {len(scored_strains)} strains scored")
         return scored_strains
     
-    def _calculate_strain_priority_score(self, strain: Strain, filters: Dict[str, Any]) -> float:
-        """Расчет приоритетного score для сорта"""
+    def _apply_medical_qualification_stage(
+        self, 
+        strains: List[Strain], 
+        filters: Dict[str, Any]
+    ) -> List[Strain]:
+        """Stage 1: Medical Safety Qualification Filter (Priority 1 criteria)"""
         
-        total_score = 0.0
-        max_possible_score = 0.0
+        # Extract Priority 1 (medical) filters
+        medical_filters = {
+            field_name: config for field_name, config in filters.items() 
+            if isinstance(config, dict) and config.get("priority") == 1
+        }
         
-        for field_name, filter_config in filters.items():
-            if not isinstance(filter_config, dict):
-                continue
-                
-            priority = filter_config.get("priority", 2)  # Default priority 2
-            weight = self._get_priority_weight(priority)
+        if not medical_filters:
+            # No medical constraints - all strains qualify
+            return strains
+        
+        qualified_strains = []
+        
+        for strain in strains:
+            medical_qualification_score = 0.0
+            total_medical_criteria = len(medical_filters)
+            
+            for field_name, filter_config in medical_filters.items():
+                field_score = self._calculate_field_priority_score(strain, field_name, filter_config)
+                medical_qualification_score += field_score
+            
+            # Medical Qualification Threshold: >= 50% of medical criteria must pass
+            qualification_threshold = total_medical_criteria * 0.5
+            
+            if medical_qualification_score >= qualification_threshold:
+                qualified_strains.append(strain)
+            else:
+                logger.debug(f"Medical disqualification: {strain.name} scored {medical_qualification_score}/{total_medical_criteria}")
+        
+        return qualified_strains
+    
+    def _apply_numerical_ranking_stage(
+        self, 
+        qualified_strains: List[Strain], 
+        filters: Dict[str, Any]
+    ) -> List[tuple]:
+        """Stage 2: Multi-Criteria Numerical Ranking Engine (Priority 2+ criteria)"""
+        
+        if not qualified_strains:
+            return []
+        
+        # Extract Priority 2+ (numerical/preference) filters
+        ranking_filters = {
+            field_name: config for field_name, config in filters.items() 
+            if isinstance(config, dict) and config.get("priority", 2) > 1
+        }
+        
+        ranked_strains = []
+        
+        for strain in qualified_strains:
+            # Base qualification score (all qualified strains start equal)
+            base_score = 1.0
+            
+            # Apply numerical ranking criteria
+            ranking_score = self._calculate_numerical_ranking_score(strain, ranking_filters)
+            
+            # Data quality bonus
+            data_quality_bonus = self._calculate_data_quality_bonus(strain)
+            
+            final_score = base_score + ranking_score + data_quality_bonus
+            ranked_strains.append((strain, final_score))
+        
+        # Sort by final score (highest first - best matches on top)
+        ranked_strains.sort(key=lambda x: x[1], reverse=True)
+        
+        return ranked_strains
+    
+    def _calculate_numerical_ranking_score(
+        self, 
+        strain: Strain, 
+        ranking_filters: Dict[str, Any]
+    ) -> float:
+        """Calculate numerical ranking score with intelligent scaling"""
+        
+        if not ranking_filters:
+            return 0.0
+        
+        total_ranking_score = 0.0
+        
+        for field_name, filter_config in ranking_filters.items():
+            priority = filter_config.get("priority", 2)
+            weight = self._get_priority_weight(priority) / 10.0  # Scale down for ranking stage
             
             field_score = self._calculate_field_priority_score(strain, field_name, filter_config)
             
-            # MEDICAL PENALTY: Priority 1 filters with score 0.0 get heavy penalty but don't eliminate entirely
-            if priority == 1 and field_score == 0.0:
-                logger.debug(f"Medical penalty: {strain.name} fails priority 1 filter {field_name}")
-                # Apply heavy penalty instead of elimination - allows fallback options
-                total_score -= weight * 2.0  # Heavy penalty (negative score)
-            else:
-                total_score += field_score * weight
+            # For numerical fields with comparison operators, apply intelligent scaling
+            if self._is_numerical_optimization_field(field_name, filter_config):
+                field_score = self._apply_numerical_optimization_scaling(strain, field_name, filter_config)
             
-            max_possible_score += 1.0 * weight
+            total_ranking_score += field_score * weight
         
-        # Нормализуем score (0.0 - 1.0)
-        normalized_score = total_score / max_possible_score if max_possible_score > 0 else 0.0
+        return total_ranking_score
+    
+    def _is_numerical_optimization_field(self, field_name: str, filter_config: Dict[str, Any]) -> bool:
+        """Check if this is a numerical optimization field (THC, CBD, etc.)"""
+        numerical_fields = {"thc", "cbd", "cbg"}
+        optimization_operators = {"gte", "lte", "gt", "lt"}
         
-        # Дополнительный бонус за качество данных
+        return (field_name.lower() in numerical_fields and 
+                filter_config.get("operator") in optimization_operators)
+    
+    def _apply_numerical_optimization_scaling(
+        self, 
+        strain: Strain, 
+        field_name: str, 
+        filter_config: Dict[str, Any]
+    ) -> float:
+        """Apply intelligent scaling for numerical optimization (higher THC gets higher score)"""
+        
+        field_value = self._get_strain_field_value(strain, field_name)
+        numeric_value = self._to_number(field_value)
+        
+        if numeric_value is None:
+            return 0.0
+        
+        operator = filter_config.get("operator")
+        target_value = self._to_number(filter_config.get("value"))
+        
+        if target_value is None:
+            return 0.0
+        
+        # Intelligent scaling based on optimization direction
+        if operator in ["gte", "gt"]:
+            # Higher is better (e.g., "high THC")
+            if numeric_value >= target_value:
+                # Scale: meeting threshold gets 1.0, higher values get bonus up to 2.0
+                excess_ratio = (numeric_value - target_value) / max(target_value, 1.0)
+                return 1.0 + min(excess_ratio, 1.0)  # Cap bonus at 1.0
+            else:
+                # Below threshold gets proportional score
+                return numeric_value / target_value
+        
+        elif operator in ["lte", "lt"]:
+            # Lower is better (e.g., "low CBD")
+            if numeric_value <= target_value:
+                # Scale: meeting threshold gets 1.0, lower values get bonus up to 2.0
+                if target_value > 0:
+                    efficiency_ratio = (target_value - numeric_value) / target_value
+                    return 1.0 + min(efficiency_ratio, 1.0)
+                return 1.0
+            else:
+                # Above threshold gets proportional penalty
+                return target_value / max(numeric_value, 0.1)
+        
+        return 1.0 if numeric_value >= target_value else 0.0
+    
+    def _calculate_strain_priority_score(self, strain: Strain, filters: Dict[str, Any]) -> float:
+        """Penalty-Based Medical Scoring: Qualification + Penalties (not elimination)"""
+        
+        # Step 1: Medical Qualification Check (Priority 1)
+        medical_qualification_score = self._calculate_medical_qualification(strain, filters)
+        
+        # Step 2: If medically qualified, calculate full score with penalties
+        if medical_qualification_score > 0:
+            return self._calculate_qualified_strain_score(strain, filters, medical_qualification_score)
+        else:
+            # Not medically qualified - low score but not eliminated
+            return 0.1  # Minimal score for fallback options
+    
+    def _calculate_medical_qualification(self, strain: Strain, filters: Dict[str, Any]) -> float:
+        """Check if strain meets primary medical criteria"""
+        
+        medical_criteria = {
+            field_name: config for field_name, config in filters.items() 
+            if isinstance(config, dict) and config.get("priority") == 1
+        }
+        
+        if not medical_criteria:
+            return 1.0  # No medical constraints
+        
+        primary_medical_score = 0.0
+        medical_criteria_count = 0
+        
+        for field_name, filter_config in medical_criteria.items():
+            # Check primary medical indications (helps_with)
+            if field_name in ["helps_with", "medical"]:
+                field_score = self._calculate_field_priority_score(strain, field_name, filter_config)
+                if field_score > 0:
+                    primary_medical_score += 1.0  # Basic qualification
+                medical_criteria_count += 1
+        
+        # Require at least one primary medical indication
+        return primary_medical_score / max(medical_criteria_count, 1)
+    
+    def _calculate_qualified_strain_score(
+        self, 
+        strain: Strain, 
+        filters: Dict[str, Any],
+        base_qualification: float
+    ) -> float:
+        """Calculate full score for medically qualified strain"""
+        
+        # Base score for medical qualification
+        total_score = base_qualification * 2.0  # Strong base (2.0)
+        
+        # Add numerical bonuses (Priority 2)
+        numerical_bonus = self._calculate_numerical_bonuses(strain, filters)
+        total_score += numerical_bonus
+        
+        # Apply contradiction penalties (Priority 1 exclusions)
+        contradiction_penalty = self._calculate_contradiction_penalties(strain, filters)
+        total_score -= contradiction_penalty
+        
+        # Data quality bonus
         data_quality_bonus = self._calculate_data_quality_bonus(strain)
-        final_score = normalized_score + data_quality_bonus
+        total_score += data_quality_bonus
         
-        return final_score
+        # Ensure positive score for qualified strains
+        return max(total_score, 0.2)
+    
+    def _calculate_numerical_bonuses(self, strain: Strain, filters: Dict[str, Any]) -> float:
+        """Calculate bonuses for numerical criteria (THC, CBD, etc.)"""
+        
+        total_bonus = 0.0
+        
+        for field_name, filter_config in filters.items():
+            if (isinstance(filter_config, dict) and 
+                filter_config.get("priority", 2) == 2 and
+                field_name.lower() in ["thc", "cbd", "cbg"]):
+                
+                field_value = self._get_strain_field_value(strain, field_name)
+                numeric_value = self._to_number(field_value)
+                
+                if numeric_value is not None:
+                    operator = filter_config.get("operator")
+                    target_value = self._to_number(filter_config.get("value"))
+                    
+                    if target_value and operator in ["gte", "gt"]:
+                        # Higher values get more bonus
+                        if numeric_value >= target_value:
+                            excess_ratio = (numeric_value - target_value) / max(target_value, 1.0)
+                            bonus = 0.5 + min(excess_ratio * 0.5, 1.0)  # 0.5-1.5 bonus range
+                            total_bonus += bonus
+                            logger.debug(f"Numerical bonus: {strain.name} {field_name}={numeric_value} gets +{bonus:.2f}")
+        
+        return total_bonus
+    
+    def _calculate_contradiction_penalties(self, strain: Strain, filters: Dict[str, Any]) -> float:
+        """Calculate penalties for contradictory effects (not elimination!)"""
+        
+        total_penalty = 0.0
+        
+        for field_name, filter_config in filters.items():
+            if (isinstance(filter_config, dict) and 
+                filter_config.get("priority") == 1 and 
+                filter_config.get("operator") == "not_contains"):
+                
+                field_value = self._get_strain_field_value(strain, field_name)
+                excluded_values = filter_config.get("values", [])
+                
+                if isinstance(field_value, list) and excluded_values:
+                    # Count contradictions but apply graduated penalties
+                    contradictions = [v for v in field_value if str(v).lower() in [str(e).lower() for e in excluded_values]]
+                    
+                    if contradictions:
+                        # Graduated penalty: minor contradictions get smaller penalties
+                        for contradiction in contradictions:
+                            if str(contradiction).lower() in ["happy", "euphoric"]:
+                                penalty = 0.2  # Minor penalty for mood effects
+                            elif str(contradiction).lower() in ["uplifted", "creative"]:
+                                penalty = 0.4  # Moderate penalty
+                            elif str(contradiction).lower() in ["energetic", "talkative"]:
+                                penalty = 0.6  # Higher penalty for truly contradictory effects
+                            else:
+                                penalty = 0.3  # Default moderate penalty
+                            
+                            total_penalty += penalty
+                            logger.debug(f"Contradiction penalty: {strain.name} has {contradiction} = -{penalty:.1f}")
+        
+        return min(total_penalty, 1.5)  # Cap total penalty
     
     def _get_priority_weight(self, priority: int) -> float:
         """Получение веса по приоритету"""
@@ -614,6 +857,64 @@ class UniversalActionExecutor:
             bonus -= 0.05
             
         return max(bonus, -0.1)  # Ограничиваем штраф
+    
+    def _apply_secondary_numerical_sorting(
+        self, 
+        primary_sorted_strains: List[tuple], 
+        filters: Dict[str, Any]
+    ) -> List[tuple]:
+        """Вторичная сортировка по числовым критериям внутри одинаковых медицинских score"""
+        
+        if not primary_sorted_strains:
+            return []
+        
+        # Найти числовые критерии Priority 2 с операторами сравнения
+        numerical_criteria = []
+        for field_name, filter_config in filters.items():
+            if (isinstance(filter_config, dict) and 
+                filter_config.get("priority", 2) == 2 and
+                field_name.lower() in ["thc", "cbd", "cbg"] and
+                filter_config.get("operator") in ["gte", "lte", "gt", "lt"]):
+                
+                numerical_criteria.append((field_name, filter_config))
+        
+        if not numerical_criteria:
+            return primary_sorted_strains
+        
+        # Группируем по медицинскому score и сортируем внутри групп
+        score_groups = {}
+        for strain, med_score in primary_sorted_strains:
+            med_score_rounded = round(med_score, 2)  # Группируем по округленному score
+            if med_score_rounded not in score_groups:
+                score_groups[med_score_rounded] = []
+            score_groups[med_score_rounded].append((strain, med_score))
+        
+        # Сортируем каждую группу по числовым критериям
+        final_sorted = []
+        for med_score in sorted(score_groups.keys(), reverse=True):  # Лучший мед score первый
+            group_strains = score_groups[med_score]
+            
+            # Вторичная сортировка по первому числовому критерию
+            if numerical_criteria:
+                field_name, filter_config = numerical_criteria[0]
+                operator = filter_config.get("operator")
+                
+                reverse_sort = operator in ["gte", "gt"]  # Для "high THC" сортируем по убыванию
+                
+                group_strains.sort(
+                    key=lambda x: self._get_numerical_sort_key(x[0], field_name), 
+                    reverse=reverse_sort
+                )
+            
+            final_sorted.extend(group_strains)
+        
+        return final_sorted
+    
+    def _get_numerical_sort_key(self, strain: Strain, field_name: str) -> float:
+        """Получить числовой ключ для сортировки"""
+        field_value = self._get_strain_field_value(strain, field_name)
+        numeric_value = self._to_number(field_value)
+        return numeric_value if numeric_value is not None else -1  # Невалидные значения в конец
     
     def _clean_numeric_value(self, value: Any) -> Optional[float]:
         """Очистка числового значения"""

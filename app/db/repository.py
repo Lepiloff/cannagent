@@ -11,7 +11,7 @@ from app.models.database import (
 from app.models.schemas import StrainCreate, StrainFilterRequest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import text, and_, or_, not_
-from app.core.intent_detection import IntentType, IntentDetector
+from app.core.intent_detection import IntentType
 
 
 class StrainRepository:
@@ -19,7 +19,6 @@ class StrainRepository:
     
     def __init__(self, db: Session):
         self.db = db
-        self.intent_detector = IntentDetector()
     def get_strain(self, strain_id: int) -> Optional[StrainModel]:
         """Получение штамма по ID"""
         return self.db.query(StrainModel).filter(StrainModel.id == strain_id).first()
@@ -45,27 +44,14 @@ class StrainRepository:
     
     def search_strains_with_intent(self, query: str, query_embedding: Optional[List[float]] = None, 
                                   limit: int = 5) -> List[StrainModel]:
-        """Smart strain search with intent detection and structured filtering"""
+        """DEPRECATED: Legacy intent-based search, replaced by Smart Query Executor v3.0"""
         
-        # Detect user intent
-        intent = self.intent_detector.detect_intent(query)
-        filters = self.intent_detector.get_intent_filters(intent)
-        
-        print(f"🔍 SEARCH DEBUG: Query='{query}', Intent={intent.value}, Limit={limit}")
-        print(f"🔍 SEARCH DEBUG: Filters={filters}")
-        
-        results = self._apply_structured_search(
-            query_embedding=query_embedding,
-            required_feelings=filters.get("required_feelings", set()),
-            preferred_categories=filters.get("preferred_categories", set()),
-            exclude_feelings=filters.get("exclude_feelings", set()),
-            required_helps_with=filters.get("required_helps_with", set()),
-            exclude_helps_with=filters.get("exclude_helps_with", set()),
-            limit=limit
-        )
-        
-        print(f"🔍 SEARCH DEBUG: Found {len(results)} strains: {[s.name for s in results]}")
-        return results
+        # Fallback to simple similarity search
+        if query_embedding:
+            return self.search_similar_strains(query_embedding, limit)
+        else:
+            # Return general strains if no embedding provided
+            return self.get_strains(limit=limit)
     
     def _apply_structured_search(self, query_embedding: Optional[List[float]] = None,
                                required_feelings: Set[str] = None,

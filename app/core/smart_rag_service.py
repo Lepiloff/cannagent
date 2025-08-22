@@ -82,7 +82,11 @@ class SmartRAGService:
             return self._legacy_process_query(query, session)
         
         # 6. Обработка случаев недостаточного контекста
-        if smart_analysis.action_plan.primary_action in ['expand_search'] and not session_strains:
+        if smart_analysis.action_plan.primary_action in ['sort_strains', 'filter_strains', 'select_strains'] and not session_strains:
+            # Если пытаемся сортировать/фильтровать/выбирать, но нет сортов в сессии - делаем поиск
+            logger.info(f"Converting {smart_analysis.action_plan.primary_action} to search_strains due to empty session")
+            smart_analysis.action_plan.primary_action = 'search_strains'
+        elif smart_analysis.action_plan.primary_action in ['expand_search'] and not session_strains:
             # Для expand_search без контекста - просто выполняем поиск
             pass
         
@@ -170,8 +174,8 @@ class SmartRAGService:
     ) -> ChatResponse:
         """Построение ответа на основе Smart анализа"""
         
-        # Используем готовый natural response от AI
-        response_text = analysis.natural_response
+        # Используем готовый natural response от AI с подстановкой реальных названий
+        response_text = self._substitute_strain_placeholders(analysis.natural_response, strains)
         
         # Компактные сорта для UI
         compact_strains = self._build_compact_strains(strains)
@@ -269,6 +273,53 @@ class SmartRAGService:
             compact_strains.append(compact_strain)
         
         return compact_strains
+    
+    def _substitute_strain_placeholders(self, response_text: str, strains: List[Strain]) -> str:
+        """Заменяет плейсхолдеры [strain_name], [Strain Name] на реальные названия сортов"""
+        
+        if not strains or not response_text:
+            return response_text
+        
+        # Получаем первый сорт как основной для замены
+        primary_strain = strains[0]
+        primary_name = primary_strain.name.split(' | ')[0] if primary_strain.name else "Unknown"
+        
+        # Паттерны плейсхолдеров для замены
+        placeholders = [
+            "[strain_name]", "[Strain Name]", "[strain name]", "[STRAIN_NAME]",
+            "[nombre de la cepa]", "[Nombre de la Cepa]", "[NOMBRE DE LA CEPA]",
+            "[cepa]", "[Cepa]", "[CEPA]", "[variety]", "[Variety]", "[VARIETY]",
+            "Nombre de la variedad", "'Nombre de la variedad'", "[Nombre de la variedad]",
+            "nombre de la variedad", "'nombre de la variedad'", "[nombre de la variedad]",
+            "Strain Name", "'Strain Name'", "strain name", "'strain name'"
+        ]
+        
+        result_text = response_text
+        
+        # Заменяем все плейсхолдеры на название первого сорта
+        for placeholder in placeholders:
+            result_text = result_text.replace(placeholder, primary_name)
+        
+        # Если есть несколько сортов, добавляем их через запятую для некоторых случаев
+        if len(strains) > 1:
+            # Ищем конструкции типа "cepas como [strain_name]" и заменяем на список
+            strain_names = [s.name.split(' | ')[0] for s in strains[:3]]  # Первые 3 сорта
+            strain_list = ", ".join(strain_names)
+            
+            # Паттерны для множественного числа
+            multiple_patterns = [
+                f"cepas como {primary_name}",
+                f"strains like {primary_name}", 
+                f"variedades como {primary_name}",
+                f"varieties like {primary_name}"
+            ]
+            
+            for pattern in multiple_patterns:
+                if pattern in result_text:
+                    replacement = pattern.replace(primary_name, strain_list)
+                    result_text = result_text.replace(pattern, replacement)
+        
+        return result_text
     
     def _build_strain_url(self, strain_slug: str) -> Optional[str]:
         """Построение URL для сорта"""
