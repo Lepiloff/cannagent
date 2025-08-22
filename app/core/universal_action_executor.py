@@ -1030,10 +1030,15 @@ class UniversalActionExecutor:
     
     def _get_priority_weight(self, priority: int) -> float:
         """Получение веса по приоритету"""
+        import os
+        # Разрешаем переопределение через ENV
+        medical_w = float(os.getenv("MEDICAL_WEIGHT", "10.0"))
+        secondary_w = float(os.getenv("SECONDARY_WEIGHT", "3.0"))
+        tertiary_w = float(os.getenv("TERTIARY_WEIGHT", "1.0"))
         priority_weights = {
-            1: 10.0,  # Медицинские показания - высший приоритет
-            2: 3.0,   # Вторичные критерии (THC, CBD, category)
-            3: 1.0    # Третичные критерии (flavors, appearance)
+            1: medical_w,   # Медицинские показания - высший приоритет
+            2: secondary_w, # Вторичные критерии (THC, CBD, category)
+            3: tertiary_w   # Третичные критерии (flavors, appearance)
         }
         return priority_weights.get(priority, 1.0)
     

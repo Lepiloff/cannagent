@@ -99,6 +99,13 @@ class SmartRAGService:
         if policy_hint.get("suggested_sort") and "sort" not in smart_analysis.action_plan.parameters:
             smart_analysis.action_plan.parameters["sort"] = policy_hint["suggested_sort"]
 
+        # Если пришли фильтры от политики (например, medical),
+        # а действие не делает явного отбора (explain/select), переключимся на filter_strains
+        has_filters = bool(smart_analysis.action_plan.parameters.get("filters"))
+        if has_filters and smart_analysis.action_plan.primary_action in ["explain_strains", "select_strains"]:
+            logger.info("Switching action to filter_strains due to presence of policy filters")
+            smart_analysis.action_plan.primary_action = "filter_strains"
+
         # Язык: если AI не указал, используем детекцию политики
         if not smart_analysis.detected_language:
             smart_analysis.detected_language = policy_hint.get("language") or 'en'
@@ -214,22 +221,6 @@ class SmartRAGService:
         
         # Компактные сорта для UI
         compact_strains = self._build_compact_strains(strains)
-        
-        # Гарантировать явную рекомендацию одного конкретного сорта (имя + URL)
-        # если пользователь, вероятно, ожидает единственный ответ
-        if compact_strains:
-            need_explicit = False
-            # Эвристика: если выбранное действие связано с рекомендацией/сортировкой/фильтрацией
-            # и текст не содержит явного названия из top-1, добавим строку Top recommendation
-            top_name = compact_strains[0].name
-            if top_name and top_name not in (response_text or ""):
-                need_explicit = True
-            if need_explicit:
-                top_url = compact_strains[0].url or self._build_strain_url(compact_strains[0].slug)
-                explicit_line = f"\nTop recommendation: {top_name}"
-                if top_url:
-                    explicit_line += f" – {top_url}"
-                response_text = (response_text or "").rstrip() + explicit_line
         
         # Динамические quick actions (либо от AI, либо сгенерированные)
         quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(

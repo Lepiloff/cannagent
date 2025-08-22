@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional, Set
 from app.models.session import ConversationSession
 from app.models.schemas import Strain
 from app.core.taxonomy import normalize_list
+import os
 
 
 SPANISH_HINT_WORDS = {
@@ -190,16 +191,20 @@ def decide_action_hint(session: ConversationSession, session_strains: List[Strai
 
     force_expand = False
     # Если запрошена новая категория и она не совпадает с текущими контекстными сортами → расширять поиск
-    if signals.get("requested_category") and not match.get("category_match", True):
+    category_strict = os.getenv("CATEGORY_MATCH_STRICT", "true").lower() == "true"
+    if category_strict and signals.get("requested_category") and not match.get("category_match", True):
         force_expand = True
 
     # Если запрошены эффекты/вкусы и контекст покрывает их слабо (<0.5) → расширять поиск
-    if ((signals.get("desired_effects") and match.get("effects_match", 1.0) < 0.5) or
-        (signals.get("flavors") and match.get("flavors_match", 1.0) < 0.5)):
+    eff_thr = float(os.getenv("EFFECTS_MATCH_THRESHOLD", "0.5"))
+    flv_thr = float(os.getenv("FLAVORS_MATCH_THRESHOLD", "0.5"))
+    if ((signals.get("desired_effects") and match.get("effects_match", 1.0) < eff_thr) or
+        (signals.get("flavors") and match.get("flavors_match", 1.0) < flv_thr)):
         force_expand = True
 
     # Если запрошены медицинские показания и контекст покрывает слабо (<0.5) → расширять поиск
-    if (signals.get("medical") and match.get("medical_match", 1.0) < 0.5):
+    med_thr = float(os.getenv("MEDICAL_MATCH_THRESHOLD", "0.5"))
+    if (signals.get("medical") and match.get("medical_match", 1.0) < med_thr):
         force_expand = True
 
     filters: Dict[str, Any] = {}
