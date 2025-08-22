@@ -111,6 +111,19 @@ class SmartRAGService:
         elif smart_analysis.action_plan.primary_action in ['expand_search'] and not session_strains:
             # Для expand_search без контекста - просто выполняем поиск
             pass
+        # Дополнительно: если есть явная смена категории (в policy_hint) и она не совпадает с контекстом — расширим поиск
+        elif smart_analysis.action_plan.primary_action in ['sort_strains', 'filter_strains']:
+            policy_filters = smart_analysis.action_plan.parameters.get('filters', {})
+            requested_category = None
+            if isinstance(policy_filters, dict) and 'category' in policy_filters:
+                cat_cfg = policy_filters['category']
+                if isinstance(cat_cfg, dict):
+                    requested_category = cat_cfg.get('value')
+            if requested_category and session_strains:
+                session_cats = {s.category for s in session_strains if getattr(s, 'category', None)}
+                if requested_category not in session_cats:
+                    logger.info("Detected category change not present in session context; switching to expand_search")
+                    smart_analysis.action_plan.primary_action = 'expand_search'
         
         # 9. Выполнение действия по AI плану
         result_strains = self.action_executor.execute_action(
@@ -201,6 +214,22 @@ class SmartRAGService:
         
         # Компактные сорта для UI
         compact_strains = self._build_compact_strains(strains)
+        
+        # Гарантировать явную рекомендацию одного конкретного сорта (имя + URL)
+        # если пользователь, вероятно, ожидает единственный ответ
+        if compact_strains:
+            need_explicit = False
+            # Эвристика: если выбранное действие связано с рекомендацией/сортировкой/фильтрацией
+            # и текст не содержит явного названия из top-1, добавим строку Top recommendation
+            top_name = compact_strains[0].name
+            if top_name and top_name not in (response_text or ""):
+                need_explicit = True
+            if need_explicit:
+                top_url = compact_strains[0].url or self._build_strain_url(compact_strains[0].slug)
+                explicit_line = f"\nTop recommendation: {top_name}"
+                if top_url:
+                    explicit_line += f" – {top_url}"
+                response_text = (response_text or "").rstrip() + explicit_line
         
         # Динамические quick actions (либо от AI, либо сгенерированные)
         quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(

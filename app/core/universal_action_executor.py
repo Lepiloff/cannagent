@@ -1,4 +1,8 @@
 from typing import List, Dict, Any, Optional, Union
+import math
+from app.core.llm_interface import get_llm
+from app.core.taxonomy import normalize_list, get_synonyms
+from app.core.cache import cache_service
 from app.models.schemas import Strain
 from app.core.smart_query_analyzer import ActionPlan
 from app.db.repository import StrainRepository
@@ -16,6 +20,8 @@ class UniversalActionExecutor:
     
     def __init__(self, repository: StrainRepository):
         self.repository = repository
+        self._llm = get_llm()
+        self._flavor_embedding_cache: Dict[str, List[float]] = {}
         self.executors = {
             "sort_strains": self._execute_sort_strains,
             "filter_strains": self._execute_filter_strains, 
@@ -94,6 +100,7 @@ class UniversalActionExecutor:
                 logger.info("Hard category filter produced 0 results, keeping full set to avoid empty response")
 
         # Мягкий фильтр по вкусам: применяем, но отступаемся если пусто
+        flavor_prefilter_applied = False
         if isinstance(filters, dict) and "flavors" in filters:
             ff = filters.get("flavors")
             if isinstance(ff, dict) and ff.get("operator") == "contains" and (ff.get("values") or ff.get("value")):
@@ -101,6 +108,7 @@ class UniversalActionExecutor:
                 if tentative:
                     logger.info(f"Applied flavor prefilter: {len(source_strains)} -> {len(tentative)}")
                     source_strains = tentative
+                    flavor_prefilter_applied = True
                 else:
                     logger.info("Flavor prefilter would yield 0 results; skipping to keep broader pool")
 
@@ -160,6 +168,18 @@ class UniversalActionExecutor:
                     sorted_strain_list = sorted(strain_list, key=lambda st: effect_match_count(st), reverse=True)
                 else:
                     sorted_strain_list = self._apply_universal_sort(strain_list, sort_config)
+                
+                # Дополнительный семантический буст по ароматам, если запросил пользователь
+                fl_cfg = filters.get("flavors") if isinstance(filters, dict) else None
+                if isinstance(fl_cfg, dict) and fl_cfg.get("operator") == "contains":
+                    targets = [str(v).lower() for v in (fl_cfg.get("values") or ([] if fl_cfg.get("value") is None else [fl_cfg.get("value")]))]
+                    if targets:
+                        # Если flavor-префильтр не сработал (ничего не отсёк), усиливаем ранжирование по семантике
+                        try:
+                            sorted_strain_list = self._apply_semantic_flavor_rerank(sorted_strain_list, targets)
+                            logger.info("Applied semantic flavor rerank boost")
+                        except Exception as e:
+                            logger.warning(f"Semantic flavor rerank failed: {e}")
             else:
                 sorted_strain_list = self._apply_universal_sort(strain_list, sort_config)
             sorted_strains = [(s, 1.0) for s in sorted_strain_list]
@@ -177,6 +197,20 @@ class UniversalActionExecutor:
     ) -> List[Strain]:
         """Универсальная сортировка существующих сортов"""
         
+        # Если пришли фильтры вместе с сортировкой — сначала применим их к контексту.
+        # Если в результате 0 — расширяем поиск по БД с теми же фильтрами и сортируем.
+        prefiltered_strains = strains
+        incoming_filters = parameters.get("filters")
+        if isinstance(incoming_filters, dict) and strains:
+            filtered = self._apply_universal_filters(strains, incoming_filters)
+            if filtered:
+                prefiltered_strains = filtered
+            else:
+                # Контекст не покрывает новые критерии (например, новая категория Sativa) → поиск в БД
+                logger.info("Sort requested with filters but session has 0 matches; expanding search to database")
+                searched = self._execute_search_strains([], parameters)
+                prefiltered_strains = searched
+
         # Support both old format (sort_by, sort_order) and new format (sort object)
         if "sort" in parameters and isinstance(parameters["sort"], dict):
             sort_config = {
@@ -189,19 +223,19 @@ class UniversalActionExecutor:
                 "order": parameters.get("sort_order", "desc")
             }
         exclude_invalid = parameters.get("exclude_invalid", [])
-        limit = parameters.get("limit", len(strains))
+        limit = parameters.get("limit", len(prefiltered_strains) if prefiltered_strains else 0)
         
         logger.info(f"Universal sort: {sort_config}, exclude_invalid={exclude_invalid}")
         
         # Фильтрация invalid значений если требуется
-        valid_strains = strains
+        valid_strains = prefiltered_strains
         if exclude_invalid:
             valid_strains = self._filter_out_invalid_data(
-                strains, 
+                valid_strains, 
                 sort_config["field"], 
                 exclude_invalid
             )
-            logger.info(f"Filtered invalid: {len(strains)} -> {len(valid_strains)} strains")
+            logger.info(f"Filtered invalid: {len(prefiltered_strains)} -> {len(valid_strains)} strains")
         
         # Применяем универсальную сортировку
         sorted_strains = self._apply_universal_sort(valid_strains, sort_config)
@@ -220,9 +254,14 @@ class UniversalActionExecutor:
         filters = parameters.get("filters", parameters.get("criteria", {}))  # Поддержка обоих форматов
         logger.info(f"Universal filter with: {filters}")
         
-        # Применяем универсальные фильтры
+        # Применяем универсальные фильтры к контексту
         filtered_strains = self._apply_universal_filters(strains, filters)
         logger.info(f"Filtering result: {len(strains)} -> {len(filtered_strains)} strains")
+
+        # Если 0 — расширяем поиск по БД теми же фильтрами
+        if not filtered_strains:
+            logger.info("Filter on session returned 0, expanding to database search")
+            return self._execute_search_strains([], {"filters": filters, "limit": parameters.get("limit", 5)})
         
         return filtered_strains
     
@@ -282,14 +321,27 @@ class UniversalActionExecutor:
         # Перенаправляем на универсальный поиск
         new_strains = self._execute_search_strains([], parameters)
         
-        # Объединяем с существующими, избегая дубликатов
-        existing_ids = {s.id for s in strains}
+        # Если есть фильтры, сначала фильтруем существующие контекстные сорта теми же фильтрами
+        filters = parameters.get("filters", {})
+        base_strains = strains
+        if isinstance(filters, dict) and filters:
+            base_strains = self._apply_universal_filters(strains, filters)
+        
+        # Объединяем с существующими (отфильтрованными), избегая дубликатов
+        existing_ids = {s.id for s in base_strains}
         unique_new_strains = [s for s in new_strains if s.id not in existing_ids]
+        combined = base_strains + unique_new_strains
         
-        combined = strains + unique_new_strains
+        # Применяем сортировку если задана
+        sort_cfg = parameters.get("sort")
+        if isinstance(sort_cfg, dict) and combined:
+            combined = self._apply_universal_sort(combined, {
+                "field": sort_cfg.get("field", "thc"),
+                "order": sort_cfg.get("order", "desc")
+            })
+        
         limit = parameters.get("limit", 10)
-        
-        logger.info(f"Expand search: added {len(unique_new_strains)} new strains")
+        logger.info(f"Expand search: base={len(base_strains)}, added={len(unique_new_strains)}")
         return combined[:limit]
     
     def _apply_universal_filters(
@@ -350,9 +402,49 @@ class UniversalActionExecutor:
         # Спец-обработка для ароматов (flavors): синонимы и подстроки
         if field_name == "flavors":
             if operator == "contains":
-                return self._flavor_contains_match(field_value, target_values or [target_value])
+                # Нормализуем целевые значения с учётом синонимов/языков
+                normalized_targets = []
+                for t in (target_values or [target_value]):
+                    if t is None:
+                        continue
+                    normalized_targets.extend(get_synonyms("flavors", str(t)))
+                return self._flavor_contains_match(field_value, normalized_targets)
             if operator == "not_contains":
-                return not self._flavor_contains_match(field_value, target_values or [target_value])
+                normalized_targets = []
+                for t in (target_values or [target_value]):
+                    if t is None:
+                        continue
+                    normalized_targets.extend(get_synonyms("flavors", str(t)))
+                return not self._flavor_contains_match(field_value, normalized_targets)
+
+        if field_name in ["effects", "feelings", "negatives", "side_effects", "helps_with", "medical"]:
+            # Нормализация и расширение целей по таксономии
+            cat = (
+                "effects" if field_name in ["effects", "feelings"] else
+                "negatives" if field_name in ["negatives", "side_effects"] else
+                "helps_with"
+            )
+            if operator == "contains":
+                expanded_targets = []
+                for t in (target_values or [target_value]):
+                    if t is None:
+                        continue
+                    expanded_targets.extend(get_synonyms(cat, str(t)))
+                return self._contains_match(field_value, expanded_targets)
+            if operator == "not_contains":
+                expanded_targets = []
+                for t in (target_values or [target_value]):
+                    if t is None:
+                        continue
+                    expanded_targets.extend(get_synonyms(cat, str(t)))
+                return not self._contains_match(field_value, expanded_targets)
+            if operator == "any":
+                expanded_targets = []
+                for t in (target_values or [target_value]):
+                    if t is None:
+                        continue
+                    expanded_targets.extend(get_synonyms(cat, str(t)))
+                return self._any_match(field_value, expanded_targets)
 
         if operator == "eq":
             return self._simple_match(field_value, target_value)
@@ -386,17 +478,8 @@ class UniversalActionExecutor:
         else:
             return False
 
-        # Расширим цели синонимами
-        expanded_targets: List[str] = []
-        for t in targets:
-            if t is None:
-                continue
-            t_norm = str(t).strip().lower()
-            expanded_targets.append(t_norm)
-            expanded_targets.extend(self._get_flavor_synonyms(t_norm))
-
-        # Удалим дубликаты
-        expanded_set = set(expanded_targets)
+        # Цели уже нормализованы через taxonomy
+        expanded_set = set(str(t).strip().lower() for t in targets if t)
 
         # Совпадения по равенству или подстроке в обе стороны
         for fv in flavors:
@@ -407,14 +490,7 @@ class UniversalActionExecutor:
                     return True
         return False
 
-    def _get_flavor_synonyms(self, token: str) -> List[str]:
-        """Синонимы для ароматов (минимально необходимый словарь)."""
-        synonyms: Dict[str, List[str]] = {
-            "menthol": ["mint", "minty", "peppermint", "spearmint"],
-            "mint": ["menthol", "minty", "peppermint", "spearmint"],
-            "citrus": ["lemon", "lime", "orange", "grapefruit"],
-        }
-        return synonyms.get(token, [])
+    # synonyms перенесены в taxonomy
     
     def _get_strain_field_value(self, strain: Strain, field_name: str) -> Any:
         """Универсальное получение значения поля сорта"""
@@ -425,13 +501,17 @@ class UniversalActionExecutor:
         
         # Специальные случаи для связанных объектов
         if field_name == "effects" or field_name == "feelings":
-            return [f.name for f in strain.feelings] if strain.feelings else []
+            raw = [f.name for f in strain.feelings] if strain.feelings else []
+            return normalize_list("effects", raw)
         elif field_name == "helps_with" or field_name == "medical":
-            return [h.name for h in strain.helps_with] if strain.helps_with else []
+            raw = [h.name for h in strain.helps_with] if strain.helps_with else []
+            return normalize_list("helps_with", raw)
         elif field_name == "negatives" or field_name == "side_effects":
-            return [n.name for n in strain.negatives] if strain.negatives else []
+            raw = [n.name for n in strain.negatives] if strain.negatives else []
+            return normalize_list("negatives", raw)
         elif field_name == "flavors":
-            return [fl.name for fl in strain.flavors] if strain.flavors else []
+            raw = [fl.name for fl in strain.flavors] if strain.flavors else []
+            return normalize_list("flavors", raw)
         
         # Числовые поля с очисткой
         elif field_name in ["thc", "cbd", "cbg"]:
@@ -559,6 +639,70 @@ class UniversalActionExecutor:
         
         # Для остального
         return str(value) if value is not None else ""
+
+    # ---------- Semantic flavor helpers ----------
+    def _apply_semantic_flavor_rerank(self, strains: List[Strain], targets: List[str]) -> List[Strain]:
+        """Переранжировать список по косинусной близости ароматов к целевым flavor-токенам.
+        Низкая стоимость: кэшируем эмбеддинги, ограничиваемся первыми N вариантами.
+        """
+        if not strains or not targets:
+            return strains
+        capped_strains = strains[:120]  # ограничение для производительности
+        query_emb = self._get_embedding_cached(" ".join(sorted(set(targets))))
+        if not query_emb:
+            return strains
+        def strain_flavor_score(st: Strain) -> float:
+            flavors = [str(fl.name).lower() for fl in (st.flavors or [])]
+            if not flavors:
+                return 0.0
+            sims = []
+            for flv in flavors:
+                emb = self._get_embedding_cached(f"flavor:{flv}")
+                if emb:
+                    sims.append(self._cosine_similarity(query_emb, emb))
+            return max(sims) if sims else 0.0
+        # Считаем скор только для cap и объединяем с остатком
+        scored = [(st, strain_flavor_score(st)) for st in capped_strains]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        ranked = [st for st, _ in scored] + [st for st in strains if st not in set([s for s, _ in scored])]
+        return ranked
+
+    def _get_embedding_cached(self, text: str) -> Optional[List[float]]:
+        key = text.strip().lower()
+        # 1) in-memory
+        emb = self._flavor_embedding_cache.get(key)
+        if emb is not None:
+            return emb
+        # 2) persistent redis (stringified list)
+        persisted = cache_service.get_persistent(f"emb:flavor:{key}")
+        if persisted:
+            try:
+                emb = [float(x) for x in persisted.split(",")]
+                self._flavor_embedding_cache[key] = emb
+                return emb
+            except Exception:
+                pass
+        # 3) LLM and cache both
+        try:
+            emb = self._llm.generate_embedding(key)
+            self._flavor_embedding_cache[key] = emb
+            try:
+                cache_service.set_persistent(f"emb:flavor:{key}", ",".join(str(x) for x in emb), ttl=None)
+            except Exception:
+                pass
+            return emb
+        except Exception:
+            return None
+
+    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = sum(x*y for x, y in zip(a, b))
+        na = math.sqrt(sum(x*x for x in a))
+        nb = math.sqrt(sum(y*y for y in b))
+        if na == 0 or nb == 0:
+            return 0.0
+        return dot / (na * nb)
     
     def _filter_out_invalid_data(
         self,

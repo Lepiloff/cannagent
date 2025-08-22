@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional, Set
 from app.models.session import ConversationSession
 from app.models.schemas import Strain
+from app.core.taxonomy import normalize_list
 
 
 SPANISH_HINT_WORDS = {
@@ -35,6 +36,27 @@ FLAVOR_WORDS = {
     "citrus": "citrus",
     "pine": "pine",
     "diesel": "diesel",
+}
+
+
+# Medical keywords → canonical helps_with
+MEDICAL_WORDS = {
+    "insomnia": "insomnia",
+    "sleep": "insomnia",
+    "ansiedad": "anxiety",
+    "anxiety": "anxiety",
+    "estres": "stress",
+    "estrés": "stress",
+    "stress": "stress",
+    "depresion": "depression",
+    "depresión": "depression",
+    "depression": "depression",
+    "dolor": "pain",
+    "pain": "pain",
+    "nausea": "nausea",
+    "nauseas": "nausea",
+    "inflamacion": "inflammation",
+    "inflamación": "inflammation",
 }
 
 
@@ -74,6 +96,11 @@ def extract_request_signals(text: str) -> Dict[str, Any]:
         if k in tl:
             flavors.add(v)
 
+    medicals: Set[str] = set()
+    for k, v in MEDICAL_WORDS.items():
+        if k in tl:
+            medicals.add(v)
+
     sort_request: Optional[str] = None
     if any(w in tl for w in ["highest thc", "most thc", "strongest", "from highest to lowest"]):
         sort_request = "thc_desc"
@@ -89,6 +116,7 @@ def extract_request_signals(text: str) -> Dict[str, Any]:
         "desired_effects": sorted(desired_effects),
         "avoid_effects": sorted(avoid_effects),
         "flavors": sorted(flavors),
+        "medical": sorted(medicals),
         "sort_request": sort_request,
         "reset_indicator": reset_indicator,
         "language": language,
@@ -136,11 +164,24 @@ def evaluate_context_match(session_strains: List[Strain], signals: Dict[str, Any
     else:
         flavors_match = 1.0
 
+    # Медицинские соответствия
+    medical_targets = set(signals.get("medical") or [])
+    if medical_targets:
+        med_hits = 0
+        for s in session_strains:
+            vals = normalize_list("helps_with", [h.name for h in (s.helps_with or [])])
+            if set(vals) & medical_targets:
+                med_hits += 1
+        medical_match = med_hits / max(len(session_strains), 1)
+    else:
+        medical_match = 1.0
+
     return {
         "has_context": True,
         "category_match": category_match,
         "effects_match": effects_match,
         "flavors_match": flavors_match,
+        "medical_match": medical_match,
     }
 
 
@@ -157,6 +198,10 @@ def decide_action_hint(session: ConversationSession, session_strains: List[Strai
         (signals.get("flavors") and match.get("flavors_match", 1.0) < 0.5)):
         force_expand = True
 
+    # Если запрошены медицинские показания и контекст покрывает слабо (<0.5) → расширять поиск
+    if (signals.get("medical") and match.get("medical_match", 1.0) < 0.5):
+        force_expand = True
+
     filters: Dict[str, Any] = {}
     if signals.get("requested_category"):
         filters["category"] = {"operator": "eq", "value": signals["requested_category"], "priority": 2}
@@ -167,6 +212,8 @@ def decide_action_hint(session: ConversationSession, session_strains: List[Strai
         filters["effects_exclude"] = {"operator": "not_contains", "values": signals["avoid_effects"], "priority": 1}
     if signals.get("flavors"):
         filters["flavors"] = {"operator": "contains", "values": signals["flavors"], "priority": 3}
+    if signals.get("medical"):
+        filters["helps_with"] = {"operator": "contains", "values": signals["medical"], "priority": 1}
 
     sort_cfg: Optional[Dict[str, Any]] = None
     if signals.get("sort_request") == "thc_desc":
