@@ -103,6 +103,28 @@ class UniversalActionExecutor:
                     source_strains = tentative
                 else:
                     logger.info("Flavor prefilter would yield 0 results; skipping to keep broader pool")
+
+        # Мягкий предфильтр по эффектам (desired)
+        if isinstance(filters, dict) and "effects" in filters:
+            ef = filters.get("effects")
+            if isinstance(ef, dict) and ef.get("operator") == "contains" and (ef.get("values") or ef.get("value")):
+                tentative = self._apply_universal_filters(source_strains, {"effects": ef})
+                if tentative:
+                    logger.info(f"Applied effects prefilter: {len(source_strains)} -> {len(tentative)}")
+                    source_strains = tentative
+                else:
+                    logger.info("Effects prefilter would yield 0 results; skipping to keep broader pool")
+
+        # Мягкие числовые предфильтры (THC/CBD/CBG) с операторами порогов
+        for num_field in ["thc", "cbd", "cbg"]:
+            nf = filters.get(num_field) if isinstance(filters, dict) else None
+            if isinstance(nf, dict) and nf.get("operator") in ["gte", ">=", "gt", ">", "lte", "<=", "lt", "<"] and (nf.get("value") is not None):
+                tentative = self._apply_universal_filters(source_strains, {num_field: nf})
+                if tentative:
+                    logger.info(f"Applied numeric prefilter {num_field}: {len(source_strains)} -> {len(tentative)}")
+                    source_strains = tentative
+                else:
+                    logger.info(f"Numeric prefilter {num_field} would yield 0 results; skipping to keep broader pool")
         
         # Проверяем метод scoring
         scoring_method = scoring.get("method", "simple_sort")
@@ -125,7 +147,21 @@ class UniversalActionExecutor:
             sorted_strains = sorted(scored_strains, key=lambda x: x[1], reverse=(sort_config.get("order", "desc") == "desc"))
         else:
             strain_list = [s[0] for s in scored_strains]
-            sorted_strain_list = self._apply_universal_sort(strain_list, sort_config)
+            # Если сортировка не задана, используем tie-breaker по совпадениям желаемых эффектов
+            if not sort_config or not sort_config.get("field"):
+                desired = []
+                ef_cfg = filters.get("effects") if isinstance(filters, dict) else None
+                if isinstance(ef_cfg, dict) and ef_cfg.get("operator") == "contains":
+                    desired = [str(v).lower() for v in (ef_cfg.get("values") or ([] if ef_cfg.get("value") is None else [ef_cfg.get("value")]))]
+                if desired:
+                    def effect_match_count(st: Strain) -> int:
+                        vals = [str(v).lower() for v in (st.feelings or [])]
+                        return len(set(vals) & set(desired))
+                    sorted_strain_list = sorted(strain_list, key=lambda st: effect_match_count(st), reverse=True)
+                else:
+                    sorted_strain_list = self._apply_universal_sort(strain_list, sort_config)
+            else:
+                sorted_strain_list = self._apply_universal_sort(strain_list, sort_config)
             sorted_strains = [(s, 1.0) for s in sorted_strain_list]
         
         # Извлекаем только strain объекты и ограничиваем результат
@@ -311,6 +347,13 @@ class UniversalActionExecutor:
         target_value = filter_config.get("value")
         target_values = filter_config.get("values", [])
         
+        # Спец-обработка для ароматов (flavors): синонимы и подстроки
+        if field_name == "flavors":
+            if operator == "contains":
+                return self._flavor_contains_match(field_value, target_values or [target_value])
+            if operator == "not_contains":
+                return not self._flavor_contains_match(field_value, target_values or [target_value])
+
         if operator == "eq":
             return self._simple_match(field_value, target_value)
         elif operator == "gte" or operator == ">=":
@@ -330,6 +373,48 @@ class UniversalActionExecutor:
         
         logger.warning(f"Unknown operator: {operator}")
         return True  # Не исключаем при неизвестном операторе
+
+    def _flavor_contains_match(self, field_value: Any, targets: List[Any]) -> bool:
+        """Проверка совпадений по ароматам с учетом синонимов и подстрок."""
+        if not targets:
+            return True
+        # Нормализуем список ароматов сорта
+        if isinstance(field_value, list):
+            flavors = [str(v).strip().lower() for v in field_value]
+        elif isinstance(field_value, str):
+            flavors = [field_value.strip().lower()]
+        else:
+            return False
+
+        # Расширим цели синонимами
+        expanded_targets: List[str] = []
+        for t in targets:
+            if t is None:
+                continue
+            t_norm = str(t).strip().lower()
+            expanded_targets.append(t_norm)
+            expanded_targets.extend(self._get_flavor_synonyms(t_norm))
+
+        # Удалим дубликаты
+        expanded_set = set(expanded_targets)
+
+        # Совпадения по равенству или подстроке в обе стороны
+        for fv in flavors:
+            for tt in expanded_set:
+                if not tt:
+                    continue
+                if fv == tt or (tt in fv) or (fv in tt):
+                    return True
+        return False
+
+    def _get_flavor_synonyms(self, token: str) -> List[str]:
+        """Синонимы для ароматов (минимально необходимый словарь)."""
+        synonyms: Dict[str, List[str]] = {
+            "menthol": ["mint", "minty", "peppermint", "spearmint"],
+            "mint": ["menthol", "minty", "peppermint", "spearmint"],
+            "citrus": ["lemon", "lime", "orange", "grapefruit"],
+        }
+        return synonyms.get(token, [])
     
     def _get_strain_field_value(self, strain: Strain, field_name: str) -> Any:
         """Универсальное получение значения поля сорта"""
