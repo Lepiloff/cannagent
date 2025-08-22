@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # type: ignore[import-not-found]
 from app.models.session import ConversationSession
 from app.models.schemas import Strain
 from app.core.llm_interface import LLMInterface
@@ -32,8 +32,8 @@ class SmartQueryAnalyzer:
     Главный AI компонент для анализа пользовательских запросов с полным контекстом
     """
     
-    def __init__(self, llm_interface: Optional[LLMInterface] = None):
-        self.llm = llm_interface or LLMInterface()
+    def __init__(self, llm_interface: LLMInterface):
+        self.llm = llm_interface
         self.available_actions = [
             "search_strains",    # Поиск новых сортов из БД по критериям
             "sort_strains",      # Сортировка сортов по критериям
@@ -48,7 +48,8 @@ class SmartQueryAnalyzer:
         user_query: str,
         session: ConversationSession,
         session_strains: List[Strain],
-        full_context: Optional[Dict[str, Any]] = None
+        full_context: Optional[Dict[str, Any]] = None,
+        policy_hint: Optional[Dict[str, Any]] = None
     ) -> SmartAnalysis:
         """
         Главный метод анализа запроса с полным контекстом
@@ -63,6 +64,12 @@ class SmartQueryAnalyzer:
             else:
                 # Строим свой контекст
                 context = self._build_full_context(user_query, session, session_strains)
+            
+            # Подсказки политики диалога (если есть)
+            if policy_hint:
+                context["policy_hint"] = policy_hint
+            else:
+                context["policy_hint"] = {}
             
             # Анализ через LLM
             raw_result = self._analyze_with_llm(context)
@@ -163,6 +170,7 @@ Current topic: {current_topic}
 Previous language: {detected_language}
 Available system actions: {available_actions}
 Has session context: {has_session_context}
+Policy hint (may be empty): {policy_hint}
 
 TASK:
 Analyze the user's query and create a smart execution plan. Consider:
@@ -187,7 +195,8 @@ CRITICAL GUIDELINES:
   * Tertiary criteria (flavors, appearance) → priority: 3
 - **SMART SCORING**: Use multi-criteria scoring instead of simple filtering
 - Always exclude strains with null/N/A/invalid data when not useful for the query
-- Provide natural language response in the detected language (Spanish preferred if mixed)
+- Provide natural language response in the detected language. If uncertain, prefer English.
+- Respect policy hints when reasonable: if user requests a different category/effects/flavors that don't match session strains, prefer "search_strains" or "expand_search" with appropriate filters and optional THC sort.
 
 RESPONSE FORMAT (JSON only, no additional text):
 {{
@@ -195,7 +204,6 @@ RESPONSE FORMAT (JSON only, no additional text):
     "primary_action": "sort_strains|filter_strains|select_strains|explain_strains|search_strains",
     "parameters": {{
       "filters": {{
-        "field_name": {{"operator": "eq|gte|lte|gt|lt|contains|any|not_contains", "value": "single_value", "values": ["array_values"], "priority": 1-3}},
         "helps_with": {{"operator": "contains", "values": ["Insomnia"], "priority": 1}},
         "effects": {{"operator": "not_contains", "values": ["Energetic", "Uplifted", "Creative"], "priority": 1}},
         "thc": {{"operator": "gte", "value": 15, "priority": 2}},
@@ -207,9 +215,9 @@ RESPONSE FORMAT (JSON only, no additional text):
         "secondary_field": "thc|cbd|category"
       }},
       "sort": {{"field": "score|thc|cbd|cbg|name|category", "order": "asc|desc"}},
-      "selection": {{"index": number, "name": "strain_name", "id": number}},
+      "selection": {{"index": 0, "name": "strain_name", "id": 0}},
       "exclude_invalid": ["null", "N/A", "unknown"],
-      "limit": number,
+      "limit": 5,
       "reasoning": "detailed explanation including medical priorities and contradictions avoided"
     }}
   }},
@@ -320,7 +328,7 @@ KEY PRINCIPLES:
                 natural_response=raw_result.get("natural_response", "I can help you with that."),
                 suggested_follow_ups=raw_result.get("suggested_follow_ups", []),
                 confidence=raw_result.get("confidence", 0.8),
-                detected_language=raw_result.get("detected_language", "es"),
+                detected_language=raw_result.get("detected_language", "en"),
                 is_fallback=False
             )
             
@@ -346,7 +354,7 @@ KEY PRINCIPLES:
         
         # Определение действия по ключевым словам
         action = "explain_strains"  # По умолчанию
-        parameters = {"reasoning": "Fallback rule-based analysis"}
+        parameters: Dict[str, Any] = {"reasoning": "Fallback rule-based analysis"}
         
         if any(word in query_lower for word in ['highest', 'strongest', 'más', 'fuerte', 'potent']):
             action = "sort_strains"

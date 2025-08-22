@@ -77,17 +77,43 @@ class UniversalActionExecutor:
         except Exception as e:
             logger.error(f"Database query failed: {e}")
             return []
+
+        # Жёсткие фильтры (hard constraints) перед скорингом: категория
+        source_strains = all_strains
+        category_filter = None
+        if isinstance(filters, dict) and "category" in filters:
+            cf = filters.get("category")
+            if isinstance(cf, dict) and cf.get("operator") == "eq" and cf.get("value"):
+                category_filter = {"category": cf}
+        if category_filter:
+            prefiltered = self._apply_universal_filters(all_strains, category_filter)
+            if prefiltered:
+                source_strains = prefiltered
+                logger.info(f"Applied hard category filter: {len(all_strains)} -> {len(source_strains)}")
+            else:
+                logger.info("Hard category filter produced 0 results, keeping full set to avoid empty response")
+
+        # Мягкий фильтр по вкусам: применяем, но отступаемся если пусто
+        if isinstance(filters, dict) and "flavors" in filters:
+            ff = filters.get("flavors")
+            if isinstance(ff, dict) and ff.get("operator") == "contains" and (ff.get("values") or ff.get("value")):
+                tentative = self._apply_universal_filters(source_strains, {"flavors": ff})
+                if tentative:
+                    logger.info(f"Applied flavor prefilter: {len(source_strains)} -> {len(tentative)}")
+                    source_strains = tentative
+                else:
+                    logger.info("Flavor prefilter would yield 0 results; skipping to keep broader pool")
         
         # Проверяем метод scoring
         scoring_method = scoring.get("method", "simple_sort")
         
         if scoring_method == "weighted_priority":
             # Используем медицински-осознанную систему scoring
-            scored_strains = self._apply_weighted_priority_scoring(all_strains, filters)
+            scored_strains = self._apply_weighted_priority_scoring(source_strains, filters)
             logger.info(f"Applied weighted priority scoring: {len(scored_strains)} strains scored")
         else:
             # Применяем обычные фильтры
-            scored_strains = [(strain, 1.0) for strain in self._apply_universal_filters(all_strains, filters)]
+            scored_strains = [(strain, 1.0) for strain in self._apply_universal_filters(source_strains, filters)]
         
         # Медицинские queries: сначала по медицинскому score, затем по числовым критериям
         if scoring.get("method") == "weighted_priority":
@@ -255,6 +281,11 @@ class UniversalActionExecutor:
         """Проверка соответствия сорта универсальным фильтрам"""
         
         for field_name, filter_config in filters.items():
+            # Специальный случай: исключающие эффекты передаются отдельным ключом
+            if field_name == "effects_exclude":
+                if not self._field_matches_filter(strain, "effects", filter_config):
+                    return False
+                continue
             if not self._field_matches_filter(strain, field_name, filter_config):
                 return False
         
@@ -882,7 +913,7 @@ class UniversalActionExecutor:
             return primary_sorted_strains
         
         # Группируем по медицинскому score и сортируем внутри групп
-        score_groups = {}
+        score_groups: Dict[float, List[tuple]] = {}
         for strain, med_score in primary_sorted_strains:
             med_score_rounded = round(med_score, 2)  # Группируем по округленному score
             if med_score_rounded not in score_groups:

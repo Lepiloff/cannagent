@@ -9,6 +9,7 @@ from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
 from app.core.llm_interface import get_llm
 from app.core.intent_detection import IntentType
+from app.core.dialog_policy import extract_request_signals, decide_action_hint, detect_language
 import os
 
 logger = logging.getLogger(__name__)
@@ -70,10 +71,14 @@ class SmartRAGService:
         if self._is_reset_command(query):
             return self._handle_reset(session, query)
         
-        # 5. Smart анализ запроса с полным контекстом
+        # 5. Подсказки политики диалога (категория/эффекты/вкусы/сортировка)
+        policy_signals = extract_request_signals(query)
+        policy_hint = decide_action_hint(session, session_strains, policy_signals)
+
+        # 6. Smart анализ запроса с полным контекстом + policy
         try:
             smart_analysis = self.smart_analyzer.analyze_query(
-                query, session, session_strains, full_context
+                query, session, session_strains, full_context, policy_hint
             )
             logger.info(f"Smart analysis: {smart_analysis.action_plan.primary_action}, confidence: {smart_analysis.confidence}")
         except Exception as e:
@@ -81,7 +86,24 @@ class SmartRAGService:
             # Fallback к legacy обработке
             return self._legacy_process_query(query, session)
         
-        # 6. Обработка случаев недостаточного контекста
+        # 7. Если политика требует расширить поиск (новая категория/эффекты, контекст плохо совпадает)
+        if policy_hint.get("force_expand_search") and smart_analysis.action_plan.primary_action not in ["search_strains", "expand_search"]:
+            logger.info("Dialog policy forces expand_search due to mismatch with session context")
+            smart_analysis.action_plan.primary_action = "expand_search"
+
+        # Вливаем предложенные фильтры/сортировку в параметры (без перезаписи уже заданных AI)
+        if policy_hint.get("suggested_filters"):
+            params_filters = smart_analysis.action_plan.parameters.setdefault("filters", {})
+            for k, v in policy_hint["suggested_filters"].items():
+                params_filters.setdefault(k, v)
+        if policy_hint.get("suggested_sort") and "sort" not in smart_analysis.action_plan.parameters:
+            smart_analysis.action_plan.parameters["sort"] = policy_hint["suggested_sort"]
+
+        # Язык: если AI не указал, используем детекцию политики
+        if not smart_analysis.detected_language:
+            smart_analysis.detected_language = policy_hint.get("language") or 'en'
+
+        # 8. Обработка случаев недостаточного контекста
         if smart_analysis.action_plan.primary_action in ['sort_strains', 'filter_strains', 'select_strains'] and not session_strains:
             # Если пытаемся сортировать/фильтровать/выбирать, но нет сортов в сессии - делаем поиск
             logger.info(f"Converting {smart_analysis.action_plan.primary_action} to search_strains due to empty session")
@@ -90,19 +112,19 @@ class SmartRAGService:
             # Для expand_search без контекста - просто выполняем поиск
             pass
         
-        # 7. Выполнение действия по AI плану
+        # 9. Выполнение действия по AI плану
         result_strains = self.action_executor.execute_action(
             smart_analysis.action_plan,
             session_strains
         )
         
-        # 8. Обновление сессии
+        # 10. Обновление сессии
         self._update_session(session, query, smart_analysis, result_strains)
         
-        # 9. Сохранение сессии
+        # 11. Сохранение сессии
         self.session_manager.save_session_with_backup(session)
         
-        # 10. Построение ответа
+        # 12. Построение ответа
         return self._build_smart_response(smart_analysis, result_strains, session)
     
     def _handle_reset(self, session: ConversationSession, query: str) -> ChatResponse:
@@ -117,7 +139,7 @@ class SmartRAGService:
         session.previous_topics = []
         
         # Определение языка для ответа
-        language = self._detect_language(query)
+        language = detect_language(query)
         
         responses = {
             'es': "Perfecto, empecemos de nuevo. ¿Qué tipo de efectos buscas?",
