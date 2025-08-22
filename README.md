@@ -207,6 +207,17 @@ UNIFIED_LLM_TIMEOUT=3000            # LLM timeout in milliseconds
 FALLBACK_ON_TIMEOUT=true            # Use rule-based fallback
 EMBEDDING_CACHE_TTL=86400           # Cache strain embeddings (24 hours)
 QUERY_EMBEDDING_CACHE_TTL=3600      # Cache query embeddings (1 hour)
+
+# 🆕 Context policy thresholds (adaptive context→expand search)
+CATEGORY_MATCH_STRICT=true           # Require category match to stay in context
+EFFECTS_MATCH_THRESHOLD=0.5          # If effects match ratio < threshold → expand search
+FLAVORS_MATCH_THRESHOLD=0.35         # Softer threshold for flavors
+MEDICAL_MATCH_THRESHOLD=0.65         # Medical coverage required to stay in context
+
+# 🆕 Scoring weights (priority weighting)
+MEDICAL_WEIGHT=12.0                  # Priority 1 (helps_with)
+SECONDARY_WEIGHT=3.0                 # Priority 2 (THC/CBD/category)
+TERTIARY_WEIGHT=1.0                  # Priority 3 (flavors/appearance)
 ```
 
 ### URL Configuration
@@ -231,6 +242,66 @@ CANNAMENTE_BASE_URL=http://localhost:3000
 STRAIN_URL_PATTERN=/products/strain/{slug}/
 # Result: http://localhost:3000/products/strain/blue-dream/
 ```
+
+## 🔧 Tuning Guide (Thresholds & Weights)
+
+Цель: быстро подстроить чувствительность к смене темы и приоритизацию скоринга.
+
+### Переменные и эффект
+- CATEGORY_MATCH_STRICT: true/false. При true остаёмся в контексте только если категории совпадают; иначе → expand_search.
+- EFFECTS_MATCH_THRESHOLD: 0.0–1.0. Если доля совпадений эффектов ниже порога → expand_search. Ниже порог — дольше держим контекст.
+- FLAVORS_MATCH_THRESHOLD: 0.0–1.0. Аналогично для вкусов (мягче по умолчанию).
+- MEDICAL_MATCH_THRESHOLD: 0.0–1.0. Требуемая «покрываемость» медицинских показаний для удержания контекста.
+- MEDICAL_WEIGHT / SECONDARY_WEIGHT / TERTIARY_WEIGHT: веса в приоритетном скоринге. Медицинские показатели и штрафы за противоречия масштабируются MEDICAL_WEIGHT.
+
+Рекомендуемые значения (дефолт):
+```env
+CATEGORY_MATCH_STRICT=true
+EFFECTS_MATCH_THRESHOLD=0.5
+FLAVORS_MATCH_THRESHOLD=0.35
+MEDICAL_MATCH_THRESHOLD=0.65
+
+MEDICAL_WEIGHT=12.0
+SECONDARY_WEIGHT=3.0
+TERTIARY_WEIGHT=1.0
+```
+
+### Рецепты
+- Агрессивная смена темы (быстрее уходим в новый поиск):
+```env
+CATEGORY_MATCH_STRICT=true
+EFFECTS_MATCH_THRESHOLD=0.6
+FLAVORS_MATCH_THRESHOLD=0.5
+MEDICAL_MATCH_THRESHOLD=0.7
+```
+
+- Держаться контекста дольше (меньше expand_search):
+```env
+CATEGORY_MATCH_STRICT=false
+EFFECTS_MATCH_THRESHOLD=0.35
+FLAVORS_MATCH_THRESHOLD=0.25
+MEDICAL_MATCH_THRESHOLD=0.5
+```
+
+- Медицинский приоритет «жёстче» (safety-first):
+```env
+MEDICAL_WEIGHT=18.0
+SECONDARY_WEIGHT=2.5
+TERTIARY_WEIGHT=0.8
+```
+
+- Чувствительность к ароматам (например, ментол):
+```env
+FLAVORS_MATCH_THRESHOLD=0.5
+TERTIARY_WEIGHT=1.5
+```
+Замечание: aroma-точность также усиливается семантическим flavor rerank (эмбеддинги + Redis кэш), это включено всегда и не требует настроек.
+
+### Диагностика
+- Логи: установите `LOG_LEVEL=DEBUG` для подробностей по policy hint/expand и применённым фильтрам/сортировке.
+- Быстрая проверка: прогоните сценарии из разделов «Context-Aware Strain Recommendations» и «Enhanced Chat API» с разными ENV.
+
+Границы: не ставьте пороги =1.0 (почти всегда будет expand_search) и не опускайте все пороги <0.2 (система перестанет адаптивно переключаться).
 
 ## 🛠 Commands
 
@@ -293,6 +364,9 @@ docker compose exec api python scripts/sync_daily.py        # Incremental sync
 - Session-aware responses (references previous recommendations)
 - Dynamic quick actions based on current strains and context
 - Warnings for resolved conflicts
+- Context-first selection with adaptive expand: follow-up filters apply to current session strains; if matches are insufficient per thresholds, the system expands search to DB automatically
+- Taxonomy normalization: multilingual synonyms for effects/negatives/helps_with/flavors are normalized for robust matching
+- Semantic flavor rerank: flavor matching boosted by embeddings with in-memory + Redis persistent cache
 
 **🆕 Key Features v2.0:**
 - ✅ **Conversational Memory**: Multi-step dialogs with context preservation
