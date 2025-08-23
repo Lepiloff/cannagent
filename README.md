@@ -260,6 +260,7 @@ CATEGORY_MATCH_STRICT=true
 EFFECTS_MATCH_THRESHOLD=0.5
 FLAVORS_MATCH_THRESHOLD=0.35
 MEDICAL_MATCH_THRESHOLD=0.65
+DOMAIN_RELEVANCE_THRESHOLD=0.2
 
 MEDICAL_WEIGHT=12.0
 SECONDARY_WEIGHT=3.0
@@ -296,6 +297,10 @@ FLAVORS_MATCH_THRESHOLD=0.5
 TERTIARY_WEIGHT=1.5
 ```
 Замечание: aroma-точность также усиливается семантическим flavor rerank (эмбеддинги + Redis кэш), это включено всегда и не требует настроек.
+
+### Out-of-domain (вне тематики)
+- Включён лёгкий OOD-детектор на евристиках. При низкой доменной релевантности агент не делает поиск и предлагает вернуться к подбору сортов.
+- Порог: `DOMAIN_RELEVANCE_THRESHOLD` (0–1). Повышайте, если агент слишком часто уходит в нерелевантные ответы.
 
 ### Диагностика
 - Логи: установите `LOG_LEVEL=DEBUG` для подробностей по policy hint/expand и применённым фильтрам/сортировке.

@@ -9,7 +9,7 @@ from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
 from app.core.llm_interface import get_llm
 from app.core.intent_detection import IntentType
-from app.core.dialog_policy import extract_request_signals, decide_action_hint, detect_language
+from app.core.dialog_policy import extract_request_signals, decide_action_hint, detect_language, evaluate_domain_relevance
 import os
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,33 @@ class SmartRAGService:
         # 5. Подсказки политики диалога (категория/эффекты/вкусы/сортировка)
         policy_signals = extract_request_signals(query)
         policy_hint = decide_action_hint(session, session_strains, policy_signals)
+        # Усиливаем OOD-детекцию по raw-запросу (не только по сигналам)
+        domain_info = evaluate_domain_relevance(query)
+        policy_hint["domain_score"] = domain_info.get("domain_score", policy_hint.get("domain_score", 1.0))
+        policy_hint["is_out_of_domain"] = domain_info.get("is_out_of_domain", policy_hint.get("is_out_of_domain", False))
+
+        # 5.1 Вне домена: короткий ответ без поиска
+        if policy_hint.get('is_out_of_domain'):
+            language = policy_hint.get('language') or 'en'
+            responses = {
+                'es': "Puedo ayudar con la selección de cepas y sus efectos. ¿Te gustaría continuar con cannabis?",
+                'en': "I can help with cannabis strains and effects. Would you like to continue with strain selection?",
+                'ru': "Я помогаю с подбором сортов каннабиса и эффектов. Продолжим про сорта?",
+            }
+            quick_actions = self._get_new_search_suggestions(language)
+            return ChatResponse(
+                response=responses.get(language, responses['en']),
+                recommended_strains=[],
+                detected_intent='out_of_domain',
+                filters_applied={},
+                session_id=session.session_id,
+                query_type='clarification',
+                language=language,
+                confidence=1.0,
+                quick_actions=quick_actions,
+                is_restored=session.is_restored,
+                is_fallback=False
+            )
 
         # 6. Smart анализ запроса с полным контекстом + policy
         try:
@@ -306,7 +333,7 @@ class SmartRAGService:
                 cbg=strain.cbg,
                 category=strain.category,
                 slug=strain.slug,
-                url=self._build_strain_url(strain.slug),
+                url=self._build_strain_url(strain.slug or ""),
                 feelings=[CompactFeeling(name=f.name) for f in strain.feelings] if strain.feelings else [],
                 helps_with=[CompactHelpsWith(name=h.name) for h in strain.helps_with] if strain.helps_with else [],
                 negatives=[CompactNegative(name=n.name) for n in strain.negatives] if strain.negatives else [],
@@ -363,7 +390,7 @@ class SmartRAGService:
         
         return result_text
     
-    def _build_strain_url(self, strain_slug: str) -> Optional[str]:
+    def _build_strain_url(self, strain_slug: Optional[str]) -> Optional[str]:
         """Построение URL для сорта"""
         if not strain_slug:
             return None
@@ -441,8 +468,9 @@ class SmartRAGService:
         logger.info("Using legacy processing mode")
         
         # Импорт legacy сервиса
-        from app.core.optimized_rag_service import OptimizedContextualRAGService
-        
+        import importlib
+        module = importlib.import_module('app.core.optimized_rag_service')
+        OptimizedContextualRAGService = getattr(module, 'OptimizedContextualRAGService')
         # Создание legacy сервиса и обработка
         legacy_service = OptimizedContextualRAGService(self.repository)
         return legacy_service.process_contextual_query(query, session.session_id)

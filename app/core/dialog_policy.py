@@ -40,6 +40,42 @@ FLAVOR_WORDS = {
 }
 
 
+# Доменные ключевые слова (англ/исп) для оценки релевантности тематики
+CANNABIS_DOMAIN_KEYWORDS = {
+    # Общие
+    "cannabis", "marijuana", "marihuana", "weed", "strain", "variety", "cepa",
+    # Категории
+    "indica", "índica", "sativa", "satíva", "hybrid", "híbrida",
+    # Каннабиноиды
+    "thc", "cbd", "cbg",
+    # Эффекты и медикал
+    "effect", "effects", "efecto", "efectos", "sleep", "insomnia", "energy", "creative", "creativity", "focus",
+    "anxiety", "depression", "stress", "pain", "dolor", "ansiedad", "depresión", "estrés",
+    # Вкусы/терпены
+    "flavor", "flavours", "sabores", "terpene", "terpenes", "menthol", "mint", "diesel", "pine", "citrus",
+}
+
+# Явные индикаторы вне домена (кухня/рецепты/прочее)
+OUT_OF_DOMAIN_HINTS = {
+    "recipe", "cook", "cooking", "kitchen", "potato", "boil", "bake", "fry", "oven", "pan",
+    "football", "weather", "news", "movie", "music", "programming", "python", "docker", "kubernetes",
+}
+
+
+def evaluate_domain_relevance(text: str) -> Dict[str, Any]:
+    """Грубая оценка релевантности домену каннабиса.
+    Возвращает domain_score (0..1) и is_out_of_domain (bool на основе порога).
+    """
+    tl = text.lower()
+    domain_hits = sum(1 for kw in CANNABIS_DOMAIN_KEYWORDS if kw in tl)
+    ood_hits = sum(1 for kw in OUT_OF_DOMAIN_HINTS if kw in tl)
+    denom = domain_hits + ood_hits
+    score = (domain_hits / denom) if denom > 0 else (1.0 if domain_hits > 0 else 0.0)
+    thr = float(os.getenv("DOMAIN_RELEVANCE_THRESHOLD", "0.2"))
+    is_ood = (score < thr) and (ood_hits > 0 or domain_hits == 0)
+    return {"domain_score": score, "is_out_of_domain": is_ood}
+
+
 # Medical keywords → canonical helps_with
 MEDICAL_WORDS = {
     "insomnia": "insomnia",
@@ -188,6 +224,12 @@ def evaluate_context_match(session_strains: List[Strain], signals: Dict[str, Any
 
 def decide_action_hint(session: ConversationSession, session_strains: List[Strain], signals: Dict[str, Any]) -> Dict[str, Any]:
     match = evaluate_context_match(session_strains, signals)
+    domain = evaluate_domain_relevance(" ".join([
+        signals.get("requested_category") or "",
+        " ".join(signals.get("desired_effects") or []),
+        " ".join(signals.get("flavors") or []),
+        " ".join(signals.get("medical") or []),
+    ]))
 
     force_expand = False
     # Если запрошена новая категория и она не совпадает с текущими контекстными сортами → расширять поиск
@@ -230,7 +272,9 @@ def decide_action_hint(session: ConversationSession, session_strains: List[Strai
         "force_expand_search": force_expand,
         "suggested_filters": filters,
         "suggested_sort": sort_cfg,
-        "language": signals.get("language", "en")
+        "language": signals.get("language", "en"),
+        "domain_score": domain.get("domain_score", 1.0),
+        "is_out_of_domain": domain.get("is_out_of_domain", False),
     }
 
 
