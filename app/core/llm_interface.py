@@ -19,18 +19,30 @@ class LLMInterface(ABC):
 
 class OpenAILLM(LLMInterface):
     """Реализация для OpenAI"""
-    
+
     def __init__(self, api_key: str):
         from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+
         self.embeddings = OpenAIEmbeddings(
             model=os.getenv('EMBEDDING_MODEL', 'text-embedding-ada-002'),
             openai_api_key=api_key
         )
         self.chat_model = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model=self._get_agent_model(),
             openai_api_key=api_key,
-            temperature=0.7
+            temperature=self._get_agent_temperature()
         )
+
+    @staticmethod
+    def _get_agent_model() -> str:
+        return os.getenv('OPENAI_AGENT_MODEL', 'gpt-4o-mini')
+
+    @staticmethod
+    def _get_agent_temperature() -> float:
+        try:
+            return float(os.getenv('AGENT_TEMPERATURE', '0.7'))
+        except ValueError:
+            return 0.7
     
     def generate_embedding(self, text: str) -> List[float]:
         """Генерация эмбеддинга через OpenAI"""
