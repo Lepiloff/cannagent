@@ -25,10 +25,10 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 from app.db.database import SessionLocal, Base
-from app.db.repository import StrainRepository 
+from app.db.repository import StrainRepository
 from app.models.database import Strain as StrainModel, Feeling, HelpsWith, Negative, Flavor, Terpene
 from app.core.rag_service import RAGService
-from app.core.intent_detection import get_energy_type
+from app.core.llm_interface import get_llm
 
 
 def get_cannamente_connection():
@@ -105,58 +105,107 @@ def get_local_connection():
 
 
 def fetch_all_strains_from_cannamente() -> List[Dict[str, Any]]:
-    """Fetch all strains with relations from cannamente database"""
+    """Fetch all strains with relations and multilingual data from cannamente database"""
     conn = get_cannamente_connection()
     cursor = conn.cursor()
-    
+
     try:
-        # Fetch strains with all structured data
+        # Fetch strains with all structured data including multilingual fields
         cursor.execute("""
-            SELECT DISTINCT
+            SELECT
                 s.id,
+                -- Legacy fields for fallback
                 s.title as name,
                 s.text_content as description,
+                -- Multilingual content fields
+                s.title_en,
+                s.title_es,
+                s.description_en,
+                s.description_es,
+                s.text_content_en,
+                s.text_content_es,
+                s.keywords_en,
+                s.keywords_es,
+                -- Cannabinoids
                 s.cbd,
                 s.thc,
                 s.cbg,
                 s.category,
                 s.active,
                 s.slug,
-                ARRAY_AGG(DISTINCT f.name) FILTER (WHERE f.name IS NOT NULL) as feelings,
-                ARRAY_AGG(DISTINCT h.name) FILTER (WHERE h.name IS NOT NULL) as helps_with,
-                ARRAY_AGG(DISTINCT n.name) FILTER (WHERE n.name IS NOT NULL) as negatives,
-                ARRAY_AGG(DISTINCT fl.name) FILTER (WHERE fl.name IS NOT NULL) as flavors
+                -- Multilingual metadata arrays
+                ARRAY_AGG(DISTINCT f.name_en) FILTER (WHERE f.name_en IS NOT NULL) as feelings_en,
+                ARRAY_AGG(DISTINCT f.name_es) FILTER (WHERE f.name_es IS NOT NULL) as feelings_es,
+                ARRAY_AGG(DISTINCT h.name_en) FILTER (WHERE h.name_en IS NOT NULL) as helps_with_en,
+                ARRAY_AGG(DISTINCT h.name_es) FILTER (WHERE h.name_es IS NOT NULL) as helps_with_es,
+                ARRAY_AGG(DISTINCT n.name_en) FILTER (WHERE n.name_en IS NOT NULL) as negatives_en,
+                ARRAY_AGG(DISTINCT n.name_es) FILTER (WHERE n.name_es IS NOT NULL) as negatives_es,
+                ARRAY_AGG(DISTINCT fl.name_en) FILTER (WHERE fl.name_en IS NOT NULL) as flavors_en,
+                ARRAY_AGG(DISTINCT fl.name_es) FILTER (WHERE fl.name_es IS NOT NULL) as flavors_es,
+                -- Terpenes (scientific names - single language)
+                ARRAY_AGG(DISTINCT t.name) FILTER (WHERE t.name IS NOT NULL) as terpenes
             FROM strains_strain s
             LEFT JOIN strains_strain_feelings sf ON s.id = sf.strain_id
             LEFT JOIN strains_feeling f ON sf.feeling_id = f.id
-            LEFT JOIN strains_strain_helps_with sh ON s.id = sh.strain_id  
+            LEFT JOIN strains_strain_helps_with sh ON s.id = sh.strain_id
             LEFT JOIN strains_helpswith h ON sh.helpswith_id = h.id
             LEFT JOIN strains_strain_negatives sn ON s.id = sn.strain_id
             LEFT JOIN strains_negative n ON sn.negative_id = n.id
             LEFT JOIN strains_strain_flavors sfl ON s.id = sfl.strain_id
             LEFT JOIN strains_flavor fl ON sfl.flavor_id = fl.id
+            LEFT JOIN strains_strain_other_terpenes st ON s.id = st.strain_id
+            LEFT JOIN strains_terpene t ON st.terpene_id = t.id
             WHERE s.active = true
-            GROUP BY s.id, s.title, s.text_content, s.cbd, s.thc, s.cbg, s.category, s.active, s.slug
-            ORDER BY s.title
+            GROUP BY s.id, s.title, s.text_content, s.title_en, s.title_es,
+                     s.description_en, s.description_es, s.text_content_en, s.text_content_es,
+                     s.keywords_en, s.keywords_es, s.cbd, s.thc, s.cbg, s.category, s.active, s.slug
+            ORDER BY COALESCE(s.title_es, s.title_en, s.title)
         """)
         
         strains = []
         for row in cursor.fetchall():
             strain_data = {
                 'cannamente_id': row[0],
+                # Legacy fields (with fallbacks)
                 'name': row[1] or f"Strain {row[0]}",
                 'description': row[2],
-                'cbd': float(row[3]) if row[3] is not None else None,
-                'thc': float(row[4]) if row[4] is not None else None,
-                'cbg': float(row[5]) if row[5] is not None else None,
-                'category': row[6],
-                'active': row[7],
-                'slug': row[8],
-                'feelings': [f for f in (row[9] or []) if f],
-                'helps_with': [h for h in (row[10] or []) if h],
-                'negatives': [n for n in (row[11] or []) if n],
-                'flavors': [fl for fl in (row[12] or []) if fl]
+                # Multilingual content fields
+                'title_en': row[3],
+                'title_es': row[4],
+                'name_en': row[3],  # Use title_en as name_en
+                'name_es': row[4],  # Use title_es as name_es
+                'description_en': row[5],
+                'description_es': row[6],
+                'text_content_en': row[7],
+                'text_content_es': row[8],
+                'keywords_en': row[9],
+                'keywords_es': row[10],
+                # Cannabinoids
+                'cbd': float(row[11]) if row[11] is not None else None,
+                'thc': float(row[12]) if row[12] is not None else None,
+                'cbg': float(row[13]) if row[13] is not None else None,
+                'category': row[14],
+                'active': row[15],
+                'slug': row[16],
+                # Multilingual metadata
+                'feelings_en': [f for f in (row[17] or []) if f],
+                'feelings_es': [f for f in (row[18] or []) if f],
+                'helps_with_en': [h for h in (row[19] or []) if h],
+                'helps_with_es': [h for h in (row[20] or []) if h],
+                'negatives_en': [n for n in (row[21] or []) if n],
+                'negatives_es': [n for n in (row[22] or []) if n],
+                'flavors_en': [fl for fl in (row[23] or []) if fl],
+                'flavors_es': [fl for fl in (row[24] or []) if fl],
+                # Terpenes (scientific names)
+                'terpenes': [t for t in (row[25] or []) if t],
             }
+
+            # Debug: Print first few strains with terpenes
+            if len(strains) < 5:
+                print(f"DEBUG - Strain #{len(strains)}: {strain_data['name']}")
+                print(f"  Raw terpenes from DB: {row[25]}")
+                print(f"  Processed terpenes: {strain_data['terpenes']}")
+
             strains.append(strain_data)
         
         print(f"📊 Fetched {len(strains)} strains with structured data from cannamente")
@@ -189,41 +238,57 @@ def clear_existing_data():
 
 
 def sync_strains_to_local_db(strains: List[Dict[str, Any]]):
-    """Sync strains with relations to local database using SQLAlchemy"""
+    """Sync strains with relations and multilingual data to local database using SQLAlchemy"""
     canagent_session = SessionLocal()
     repository = StrainRepository(canagent_session)
-    
+
     try:
-        print("🔄 Syncing strains with structured data...")
+        print("🔄 Syncing strains with structured multilingual data...")
         success_count = 0
         error_count = 0
-        
+
         for strain_data in strains:
             try:
-                # Create basic strain data (only essential fields)
-                basic_strain_data = {
+                # Create strain data with multilingual fields
+                multilingual_strain_data = {
+                    # Legacy fields (for backward compatibility)
                     'name': strain_data['name'],
-                    'title': strain_data['name'],  # Use name as title
-                    'description': strain_data['description'],
-                    'text_content': strain_data['description'],  # Use description as text_content
+                    'title': strain_data.get('title_es') or strain_data.get('title_en') or strain_data['name'],
+                    'description': strain_data.get('description_es') or strain_data.get('description_en') or strain_data.get('description'),
+                    'text_content': strain_data.get('text_content_es') or strain_data.get('text_content_en'),
+                    'keywords': strain_data.get('keywords_es') or strain_data.get('keywords_en'),
+                    # Multilingual fields
+                    'name_en': strain_data.get('name_en'),
+                    'name_es': strain_data.get('name_es'),
+                    'title_en': strain_data.get('title_en'),
+                    'title_es': strain_data.get('title_es'),
+                    'description_en': strain_data.get('description_en'),
+                    'description_es': strain_data.get('description_es'),
+                    'text_content_en': strain_data.get('text_content_en'),
+                    'text_content_es': strain_data.get('text_content_es'),
+                    'keywords_en': strain_data.get('keywords_en'),
+                    'keywords_es': strain_data.get('keywords_es'),
+                    # Cannabinoids
                     'cbd': strain_data['cbd'],
-                    'thc': strain_data['thc'], 
+                    'thc': strain_data['thc'],
                     'cbg': strain_data['cbg'],
                     'category': strain_data['category'],
                     'active': strain_data['active'],
                     'slug': strain_data['slug']
                 }
-                
+
                 # Create strain without embedding initially
-                strain = repository.create_strain(basic_strain_data, None)
-                
-                # Add structured relations
+                strain = repository.create_strain(multilingual_strain_data, None)
+
+                # Add structured relations with multilingual support
+                # Use ES as default (Spanish is primary for cannamente)
                 repository.update_strain_relations(
                     strain=strain,
-                    feelings=strain_data.get('feelings', []),
-                    helps_with=strain_data.get('helps_with', []),
-                    negatives=strain_data.get('negatives', []),
-                    flavors=strain_data.get('flavors', [])
+                    feelings=strain_data.get('feelings_es', []) or strain_data.get('feelings_en', []),
+                    helps_with=strain_data.get('helps_with_es', []) or strain_data.get('helps_with_en', []),
+                    negatives=strain_data.get('negatives_es', []) or strain_data.get('negatives_en', []),
+                    flavors=strain_data.get('flavors_es', []) or strain_data.get('flavors_en', []),
+                    terpenes=strain_data.get('terpenes', [])
                 )
                 
                 success_count += 1
@@ -245,36 +310,40 @@ def sync_strains_to_local_db(strains: List[Dict[str, Any]]):
 
 
 def regenerate_embeddings():
-    """Regenerate embeddings for all strains with structured content"""
+    """Regenerate dual embeddings (EN + ES) for all strains with structured content"""
     canagent_session = SessionLocal()
     repository = StrainRepository(canagent_session)
-    rag_service = RAGService(repository)
-    
+
+    # Get LLM interface for embedding generation
+    llm = get_llm()
+    rag_service = RAGService(repository, llm)
+
     try:
-        print("🔄 Regenerating embeddings with structured data...")
-        
+        print("🔄 Regenerating dual embeddings (EN + ES) with structured data...")
+
         # Get all strains
         strains = repository.get_strains(limit=1000)  # Get more than default 100
-        
+
         success_count = 0
         error_count = 0
-        
+
         for strain in strains:
             try:
-                # Generate embedding with structured content
+                # Generate dual embeddings (EN + ES) with structured content
                 rag_service.add_strain_embeddings(strain.id)
                 success_count += 1
-                
+
                 if success_count % 10 == 0:
                     print(f"  🔗 Generated embeddings for {success_count} strains...")
-                    
+
             except Exception as e:
                 error_count += 1
                 print(f"❌ Error generating embedding for '{strain.name}': {e}")
                 continue
-        
+
         print(f"✅ Embedding regeneration completed: {success_count} success, {error_count} errors")
-        
+        print(f"   Each strain now has dual embeddings (embedding_en + embedding_es)")
+
     except Exception as e:
         print(f"❌ Fatal error during embedding generation: {e}")
         raise
@@ -283,21 +352,21 @@ def regenerate_embeddings():
 
 
 def apply_database_schema():
-    """Apply database migration for strain relations"""
-    print("📋 Applying database schema...")
-    
+    """Apply database migration for multilingual strain relations"""
+    print("📋 Applying multilingual database schema...")
+
     # Use correct canagent database connection
-    default_url = "postgresql://ai_user:ai_password@db:5432/ai_budtender" 
+    default_url = "postgresql://ai_user:ai_password@db:5432/ai_budtender"
     canagent_engine = create_engine(os.getenv("DATABASE_URL", default_url))
-    
+
     # First create all tables using SQLAlchemy models
     print("🔧 Creating base tables with SQLAlchemy...")
     from app.models.database import Base
     Base.metadata.create_all(bind=canagent_engine)
     print("✅ Base tables created")
-    
-    # Then read and execute migration for data population
-    migration_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "001_add_strain_relations.sql")
+
+    # Then read and execute migration for data population and multilingual fields
+    migration_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "001_init_multilingual_database.sql")
     if os.path.exists(migration_path):
         with open(migration_path, 'r') as f:
             migration_sql = f.read()

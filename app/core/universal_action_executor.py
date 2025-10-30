@@ -184,9 +184,66 @@ class UniversalActionExecutor:
                 sorted_strain_list = self._apply_universal_sort(strain_list, sort_config)
             sorted_strains = [(s, 1.0) for s in sorted_strain_list]
         
-        # Извлекаем только strain объекты и ограничиваем результат
-        result_strains = [s[0] for s in sorted_strains[:limit]]
-        
+        # STAGE 3: Vector similarity reranking (if query and language available)
+        query_text = parameters.get("query")
+        language = parameters.get("language", "es")
+
+        # Apply vector reranking before final limit
+        if query_text and sorted_strains:
+            try:
+                # Generate query embedding
+                query_embedding = self._llm.generate_embedding(query_text)
+
+                # Determine which embedding field to use
+                embedding_field_name = 'embedding_es' if language == 'es' else 'embedding_en'
+
+                # Calculate cosine similarity for top candidates (limit to top 20 for performance)
+                rerank_pool = sorted_strains[:min(len(sorted_strains), 20)]
+                vector_scores = []
+
+                for strain_tuple in rerank_pool:
+                    strain = strain_tuple[0]
+                    existing_score = strain_tuple[1]
+
+                    # Get strain embedding
+                    strain_embedding = getattr(strain, embedding_field_name, None)
+
+                    if strain_embedding is None:
+                        # No embedding, keep existing score
+                        vector_scores.append((strain, existing_score, 0.0))
+                        continue
+
+                    # Calculate cosine distance using pgvector
+                    from app.models.database import Strain as StrainModel
+                    distance_result = self.repository.db.query(
+                        StrainModel.id,
+                        getattr(StrainModel, embedding_field_name).cosine_distance(query_embedding).label('distance')
+                    ).filter(StrainModel.id == strain.id).first()
+
+                    if distance_result:
+                        # Convert distance to similarity (0-1 range)
+                        similarity = 1.0 - (distance_result.distance / 2.0)
+                        # Combine existing score with vector similarity (50/50 weight)
+                        combined_score = (existing_score * 0.5) + (similarity * 0.5)
+                        vector_scores.append((strain, combined_score, similarity))
+                        logger.debug(f"Vector rerank: {strain.name} - medical:{existing_score:.3f}, vector:{similarity:.3f}, combined:{combined_score:.3f}")
+                    else:
+                        vector_scores.append((strain, existing_score, 0.0))
+
+                # Sort by combined score
+                reranked = sorted(vector_scores, key=lambda x: x[1], reverse=True)
+                result_strains = [s[0] for s in reranked[:limit]]
+
+                logger.info(f"Vector reranking applied: language={language}, pool_size={len(rerank_pool)}")
+
+            except Exception as e:
+                # Fallback to non-vector results if reranking fails
+                logger.warning(f"Vector reranking failed: {e}. Using SQL-only results.")
+                result_strains = [s[0] for s in sorted_strains[:limit]]
+        else:
+            # No query text available, use SQL-only results
+            result_strains = [s[0] for s in sorted_strains[:limit]]
+
         logger.info(f"Medical-aware search result: {len(result_strains)} strains")
         return result_strains
     

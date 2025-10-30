@@ -11,7 +11,6 @@ from app.models.database import (
 from app.models.schemas import StrainCreate, StrainFilterRequest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import text, and_, or_, not_
-from app.core.intent_detection import IntentType
 
 
 class StrainRepository:
@@ -22,7 +21,11 @@ class StrainRepository:
     def get_strain(self, strain_id: int) -> Optional[StrainModel]:
         """Получение штамма по ID"""
         return self.db.query(StrainModel).filter(StrainModel.id == strain_id).first()
-    
+
+    def get_strain_by_id(self, strain_id: int) -> Optional[StrainModel]:
+        """Alias for get_strain() for compatibility with RAGService"""
+        return self.get_strain(strain_id)
+
     def get_strains(self, skip: int = 0, limit: int = 100) -> List[StrainModel]:
         """Получение списка штаммов"""
         return self.db.query(StrainModel).filter(StrainModel.active == True).offset(skip).limit(limit).all()
@@ -243,6 +246,7 @@ class StrainRepository:
             .options(joinedload(StrainModel.helps_with))
             .options(joinedload(StrainModel.negatives))
             .options(joinedload(StrainModel.flavors))
+            .options(joinedload(StrainModel.terpenes))  # STAGE 2: Include terpenes
             .filter(StrainModel.active == True)
             .offset(skip)
             .limit(limit)
@@ -313,23 +317,24 @@ class StrainRepository:
         self.db.refresh(db_strain)
         return db_strain
     
-    def update_strain_relations(self, strain: StrainModel, 
+    def update_strain_relations(self, strain: StrainModel,
                               feelings: List[str] = None,
                               helps_with: List[str] = None,
                               negatives: List[str] = None,
-                              flavors: List[str] = None) -> StrainModel:
+                              flavors: List[str] = None,
+                              terpenes: List[str] = None) -> StrainModel:
         """Update strain relations from cannamente data"""
         
         # Update feelings
         if feelings:
             strain.feelings.clear()
             for feeling_name in feelings:
-                # Determine energy type based on predefined mapping
-                from app.core.intent_detection import get_energy_type
-                energy_type = get_energy_type(feeling_name)
-                if energy_type:
-                    feeling = self.create_or_get_feeling(feeling_name, energy_type.value)
-                    strain.feelings.append(feeling)
+                # Try to get existing feeling (seeded from migration), or create with default energy_type
+                feeling = self.db.query(Feeling).filter(Feeling.name == feeling_name).first()
+                if not feeling:
+                    # Default to 'neutral' for new feelings (most should exist from migration seed data)
+                    feeling = self.create_or_get_feeling(feeling_name, 'neutral')
+                strain.feelings.append(feeling)
         
         # Update helps_with
         if helps_with:
@@ -361,7 +366,19 @@ class StrainRepository:
                     self.db.commit()
                     self.db.refresh(flavor)
                 strain.flavors.append(flavor)
-        
+
+        # Update terpenes
+        if terpenes:
+            strain.terpenes.clear()
+            for terpene_name in terpenes:
+                terpene = self.db.query(Terpene).filter(Terpene.name == terpene_name).first()
+                if not terpene:
+                    terpene = Terpene(name=terpene_name)
+                    self.db.add(terpene)
+                    self.db.commit()
+                    self.db.refresh(terpene)
+                strain.terpenes.append(terpene)
+
         self.db.commit()
         self.db.refresh(strain)
         return strain
@@ -379,7 +396,8 @@ class StrainRepository:
             joinedload(StrainModel.feelings),
             joinedload(StrainModel.helps_with),
             joinedload(StrainModel.negatives),
-            joinedload(StrainModel.flavors)
+            joinedload(StrainModel.flavors),
+            joinedload(StrainModel.terpenes)  # STAGE 2: Include terpenes
         )
         
         # Apply filters if provided
@@ -428,7 +446,7 @@ class StrainRepository:
     
     def search_strains_by_name(self, name: str) -> List[StrainModel]:
         """Search strains by name (partial match)"""
-        
+
         return self.db.query(StrainModel).options(
             joinedload(StrainModel.feelings),
             joinedload(StrainModel.helps_with),
@@ -436,4 +454,130 @@ class StrainRepository:
             joinedload(StrainModel.flavors)
         ).filter(
             StrainModel.name.ilike(f"%{name}%")
-        ).limit(5).all() 
+        ).limit(5).all()
+
+    def hybrid_search_strains(
+        self,
+        query: str,
+        filters: Dict[str, Any],
+        language: str = 'es',
+        limit: int = 5,
+        llm = None
+    ) -> List[StrainModel]:
+        """
+        STAGE 3: Hybrid search combining SQL filtering with vector similarity reranking.
+
+        Implementation:
+        1. Apply SQL filters to narrow down candidates (category, effects, THC/CBD, etc.)
+        2. Generate query embedding for semantic search
+        3. Rerank filtered results by cosine similarity with appropriate language embedding
+
+        Args:
+            query: User query text for embedding generation
+            filters: Dictionary with SQL filter criteria (same format as search_strains_with_filters)
+            language: 'en' or 'es' - determines which embedding field to use (embedding_en or embedding_es)
+            limit: Final number of results to return
+            llm: LLM interface for embedding generation (if None, falls back to SQL-only search)
+
+        Returns:
+            List of strains ranked by vector similarity after SQL pre-filtering
+        """
+
+        # Step 1: SQL pre-filtering with extended limit for reranking pool
+        # Get 5x more candidates to ensure good reranking results
+        sql_limit = min(limit * 10, 100)  # Cap at 100 to avoid overload
+
+        # Start with base query (same as search_strains_with_filters)
+        query_obj = self.db.query(StrainModel).options(
+            joinedload(StrainModel.feelings),
+            joinedload(StrainModel.helps_with),
+            joinedload(StrainModel.negatives),
+            joinedload(StrainModel.flavors),
+            joinedload(StrainModel.terpenes)  # STAGE 2: Include terpenes
+        ).filter(StrainModel.active == True)
+
+        # Apply SQL filters if provided
+        if filters:
+            # Category filter
+            if 'preferred_categories' in filters:
+                categories = filters['preferred_categories']
+                if categories:
+                    query_obj = query_obj.filter(StrainModel.category.in_(categories))
+
+            # Effects filter
+            if 'effects' in filters:
+                effects = filters['effects']
+
+                # Required effects
+                if effects.get('desired'):
+                    for effect in effects['desired']:
+                        query_obj = query_obj.join(StrainModel.feelings).filter(
+                            Feeling.name == effect
+                        )
+
+                # Avoid effects
+                if effects.get('avoid'):
+                    for effect in effects['avoid']:
+                        exclude_subquery = self.db.query(StrainModel.id).join(
+                            StrainModel.feelings
+                        ).filter(Feeling.name == effect).subquery()
+
+                        query_obj = query_obj.filter(
+                            ~StrainModel.id.in_(exclude_subquery)
+                        )
+
+            # Potency filter
+            if 'potency' in filters and filters['potency'].get('thc'):
+                thc_pref = filters['potency']['thc']
+                if thc_pref == 'higher':
+                    query_obj = query_obj.filter(StrainModel.thc >= 15.0)
+                elif thc_pref == 'lower':
+                    query_obj = query_obj.filter(StrainModel.thc < 15.0)
+
+        # Execute SQL query
+        sql_filtered_strains = query_obj.limit(sql_limit).all()
+
+        # If no LLM available or no results from SQL, return SQL results
+        if not llm or not sql_filtered_strains:
+            return sql_filtered_strains[:limit]
+
+        # Step 2: Generate query embedding
+        try:
+            query_embedding = llm.generate_embedding(query)
+        except Exception as e:
+            # Fallback to SQL-only if embedding generation fails
+            print(f"Warning: Embedding generation failed: {e}. Falling back to SQL-only search.")
+            return sql_filtered_strains[:limit]
+
+        # Step 3: Vector similarity reranking
+        # Determine which embedding field to use based on language
+        embedding_field_name = 'embedding_es' if language == 'es' else 'embedding_en'
+
+        # Calculate cosine similarity for each strain
+        strain_scores = []
+        for strain in sql_filtered_strains:
+            # Get the appropriate language embedding
+            strain_embedding_vector = getattr(strain, embedding_field_name, None)
+
+            if strain_embedding_vector is None:
+                # Skip strains without embeddings (shouldn't happen after STAGE 1)
+                continue
+
+            # Calculate cosine distance and convert to similarity
+            # pgvector stores embeddings as Vector type, need to query for distance
+            distance_result = self.db.query(
+                StrainModel.id,
+                getattr(StrainModel, embedding_field_name).cosine_distance(query_embedding).label('distance')
+            ).filter(StrainModel.id == strain.id).first()
+
+            if distance_result:
+                # Cosine distance is 0-2 range, convert to similarity (0-1 range)
+                # similarity = 1 - (distance / 2)
+                similarity = 1.0 - (distance_result.distance / 2.0)
+                strain_scores.append((strain, similarity))
+
+        # Sort by similarity score (descending)
+        reranked_strains = sorted(strain_scores, key=lambda x: x[1], reverse=True)
+
+        # Return top N strains
+        return [strain for strain, score in reranked_strains[:limit]] 

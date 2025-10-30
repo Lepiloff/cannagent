@@ -1,10 +1,12 @@
 # Canagent - AI Cannabis Strain Recommendation System
 
-🌿 **Smart cannabis strain recommendations using Context-Aware RAG with Session Management, Intent Detection, and Conversational Memory for multi-step cannabis consultations.**
+🌿 **Smart cannabis strain recommendations using Smart Query Executor v3.0 with Multilingual Hybrid RAG, Terpenes Support, and Vector Similarity Reranking.**
 
-> **Architecture**: Smart Query Executor v3.0 with Universal AI-driven criteria generation and dynamic data quality handling.
+> **Architecture**: Smart Query Executor v3.0 with AI-driven criteria generation and hybrid search (SQL + Vector)
 
-> **Multi-language support**: English (primary), Spanish (for cannamente integration)
+> **Multi-language support**: English & Spanish with dual embeddings (embedding_en, embedding_es)
+
+> **Latest**: Multilingual Hybrid RAG with Terpenes Support (January 2025)
 
 ## 🚀 Quick Start
 
@@ -52,33 +54,50 @@ docker compose exec api python scripts/init_database.py
 make sync-strains     # Syncs feelings, effects, medical uses + embeddings
 ```
 
+## 🎯 Key Features (Latest Release)
+
+### ✅ STAGE 1: Multilingual Support (EN/ES)
+- **Dual Embeddings**: Separate 1536-dimensional vectors for English (`embedding_en`) and Spanish (`embedding_es`)
+- **Multilingual Fields**: All metadata (feelings, helps_with, flavors, negatives) available in both languages
+- **Language Detection**: Automatic query language detection with appropriate embedding selection
+- **Database Migration**: Single unified migration (`001_init_multilingual_database.sql`) creates complete multilingual structure
+- **Synced Data**: 173 strains with dual embeddings from cannamente database
+
+### ✅ STAGE 2: Terpenes Support
+- **Terpenes Database**: 8 terpenes synced with 172 strain-terpene relationships (87 strains have terpenes)
+- **Embedding Integration**: Terpenes included in vector embeddings for improved semantic search
+- **API Response**: Terpenes available in `CompactStrain` schema via `terpenes` field
+- **Scientific Names**: Terpene names with descriptors (e.g., "Caryophyllene (picante)", "Limonene (citrus)")
+
+### ✅ STAGE 3: Hybrid Search (SQL + Vector Reranking)
+- **SQL Pre-filtering**: Category, effects, THC/CBD/CBG thresholds applied first
+- **Vector Reranking**: Top candidates re-ranked by cosine similarity with query embedding
+- **Language-Aware**: Uses `embedding_es` for Spanish queries, `embedding_en` for English
+- **Combined Scoring**: Medical priority scoring (50%) + vector similarity (50%)
+- **Performance**: Processes top 20 candidates for optimal speed
+
+### ✅ Smart Query Executor v3.0
+- **AI-Driven Analysis**: LLM determines optimal search criteria without hardcoding
+- **Medical-First Priority**: Medical conditions (insomnia, anxiety, pain) get 10x weight
+- **Universal Filtering**: Handles any field/operator combination dynamically
+- **Weighted Scoring**: Medical (10x), Secondary (3x), Tertiary (1x) prioritization
+- **Data Quality**: Automatic exclusion of invalid THC/CBD data
+
 ## 🎯 API Usage Examples
 
-### Context-Aware Strain Recommendations
-
-**🆕 Multi-step Conversations with Session Management:**
+### Enhanced Strain Recommendations with Terpenes
 
 ```bash
-# Step 1: Initial recommendation (creates session)
+# Spanish query with multilingual support
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "I need something for relaxation and sleep", "source_platform": "cannamente"}'
-
-# Step 2: Follow-up question (uses session context)  
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Which one is strongest?", "session_id": "YOUR_SESSION_ID", "source_platform": "cannamente"}'
-
-# Step 3: Reset conversation
-curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Start new search", "session_id": "YOUR_SESSION_ID", "source_platform": "cannamente"}'
+  -d '{"message": "Recomiéndame cepas índica con alto THC para dormir profundamente"}'
 ```
 
-**Optimized Response Format for Cannamente UI:**
+**Optimized Response Format (with Terpenes):**
 ```json
 {
-  "response": "I recommend Northern Lights for relaxation and sleep...",
+  "response": "Aquí tienes algunas cepas índicas con alto THC que pueden ayudarte a dormir...",
   "recommended_strains": [
     {
       "id": 42,
@@ -101,36 +120,29 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       ],
       "negatives": [
         {"name": "Dry mouth"},
-        {"name": "Dry eyes"},
-        {"name": "Dizzy"}
+        {"name": "Dry eyes"}
       ],
       "flavors": [
         {"name": "earthy"},
         {"name": "pine"},
         {"name": "sweet"}
+      ],
+      "terpenes": [
+        {"name": "Myrcene (herbal)"},
+        {"name": "Pinene (woody)"},
+        {"name": "Caryophyllene (picante)"}
       ]
     }
   ],
-  "detected_intent": "sleep",
+  "detected_intent": "search_strains",
   "filters_applied": {
     "preferred_categories": ["Indica"],
-    "exclude_feelings": ["Energetic", "Talkative"]
+    "medical_priority": ["Insomnia"]
   },
-  
-  // 🆕 Context-Aware Architecture v2.0 Fields
   "session_id": "b3ee3812-17b1-4b18-ba0a-4dc846ad01d3",
-  "query_type": "new_search",          // new_search|follow_up|comparison|reset|clarification
-  "language": "es",                     // Detected language (es/en)
-  "confidence": 0.95,                   // AI confidence (0.0-1.0)
-  "quick_actions": [                    // Dynamic contextual suggestions
-    "Compare Northern Lights and OG Kush",
-    "Show strongest option", 
-    "Show mildest option",
-    "Start new search"
-  ],
-  "is_restored": false,                 // Session was restored from backup
-  "is_fallback": false,                 // Used rule-based fallback (no OpenAI)
-  "warnings": []                        // Conflict resolution warnings
+  "query_type": "search_strains",
+  "language": "es",
+  "confidence": 0.95
 }
 ```
 
@@ -143,17 +155,17 @@ curl http://localhost:8001/api/v1/strains/
 curl http://localhost:8001/api/v1/strains/2
 ```
 
-### Multi-language Support
+### Multi-language Examples
 ```bash
-# Spanish Query (cannamente style) - Context-Aware
+# English Query
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "¿Qué me recomiendas para creatividad y concentración?", "source_platform": "cannamente"}'
+  -d '{"message": "I need something for creativity and focus"}'
 
-# Follow-up in Spanish (uses session context)
+# Spanish Query (cannamente style)
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "¿Cuál de estos es más suave?", "session_id": "YOUR_SESSION_ID", "source_platform": "cannamente"}'
+  -d '{"message": "¿Qué me recomiendas para creatividad y concentración?"}'
 ```
 
 ## ⚙️ Configuration
@@ -181,7 +193,7 @@ CANNAMENTE_POSTGRES_PASSWORD=mypassword
 OPENAI_API_KEY=your_actual_api_key_here
 MOCK_MODE=false                    # Use real OpenAI API
 
-# Development Setup  
+# Development Setup
 MOCK_MODE=true                     # Use mock responses (saves API costs)
 ```
 
@@ -199,121 +211,20 @@ RATE_LIMIT_PERIOD=60
 LOG_LEVEL=INFO
 LOG_FORMAT=json
 
-# 🆕 Context-Aware Architecture v2.0 Settings
-USE_CONTEXTUAL_RAG=true              # Enable Context-Aware Architecture  
-SESSION_TTL_HOURS=4                  # Active session duration
-SESSION_BACKUP_DAYS=7                # Preference backup retention
-UNIFIED_LLM_TIMEOUT=3000            # LLM timeout in milliseconds
-FALLBACK_ON_TIMEOUT=true            # Use rule-based fallback
-EMBEDDING_CACHE_TTL=86400           # Cache strain embeddings (24 hours)
-QUERY_EMBEDDING_CACHE_TTL=3600      # Cache query embeddings (1 hour)
-
-# 🆕 Context policy thresholds (adaptive context→expand search)
-CATEGORY_MATCH_STRICT=true           # Require category match to stay in context
-EFFECTS_MATCH_THRESHOLD=0.5          # If effects match ratio < threshold → expand search
-FLAVORS_MATCH_THRESHOLD=0.35         # Softer threshold for flavors
-MEDICAL_MATCH_THRESHOLD=0.65         # Medical coverage required to stay in context
-
-# 🆕 Scoring weights (priority weighting)
-MEDICAL_WEIGHT=12.0                  # Priority 1 (helps_with)
-SECONDARY_WEIGHT=3.0                 # Priority 2 (THC/CBD/category)
-TERTIARY_WEIGHT=1.0                  # Priority 3 (flavors/appearance)
+# Smart Query Executor v3.0 Settings
+USE_SMART_EXECUTOR=true
+SMART_EXECUTOR_TIMEOUT=5000
+SMART_EXECUTOR_FALLBACK=true
+MIN_CONFIDENCE_THRESHOLD=0.3
+ENABLE_AI_REASONING_DEBUG=false
 ```
-
-### URL Configuration
-
-The system generates clickable strain URLs for cannamente integration:
-
-| Setting | Description | Example |
-|---------|-------------|---------|
-| `CANNAMENTE_BASE_URL` | Base URL for strain pages | `http://localhost:8000` |
-| `STRAIN_URL_PATTERN` | URL pattern with slug | `/strain/{slug}/` |
-| **Result** | Generated strain URL | `http://localhost:8000/strain/blue-dream/` |
-
-**Custom Configuration Examples:**
-```env
-# For production domain:
-CANNAMENTE_BASE_URL=https://dispensary.com
-STRAIN_URL_PATTERN=/cannabis/{slug}.html
-# Result: https://dispensary.com/cannabis/blue-dream.html
-
-# For local development:
-CANNAMENTE_BASE_URL=http://localhost:3000  
-STRAIN_URL_PATTERN=/products/strain/{slug}/
-# Result: http://localhost:3000/products/strain/blue-dream/
-```
-
-## 🔧 Tuning Guide (Thresholds & Weights)
-
-Цель: быстро подстроить чувствительность к смене темы и приоритизацию скоринга.
-
-### Переменные и эффект
-- CATEGORY_MATCH_STRICT: true/false. При true остаёмся в контексте только если категории совпадают; иначе → expand_search.
-- EFFECTS_MATCH_THRESHOLD: 0.0–1.0. Если доля совпадений эффектов ниже порога → expand_search. Ниже порог — дольше держим контекст.
-- FLAVORS_MATCH_THRESHOLD: 0.0–1.0. Аналогично для вкусов (мягче по умолчанию).
-- MEDICAL_MATCH_THRESHOLD: 0.0–1.0. Требуемая «покрываемость» медицинских показаний для удержания контекста.
-- MEDICAL_WEIGHT / SECONDARY_WEIGHT / TERTIARY_WEIGHT: веса в приоритетном скоринге. Медицинские показатели и штрафы за противоречия масштабируются MEDICAL_WEIGHT.
-
-Рекомендуемые значения (дефолт):
-```env
-CATEGORY_MATCH_STRICT=true
-EFFECTS_MATCH_THRESHOLD=0.5
-FLAVORS_MATCH_THRESHOLD=0.35
-MEDICAL_MATCH_THRESHOLD=0.65
-DOMAIN_RELEVANCE_THRESHOLD=0.2
-
-MEDICAL_WEIGHT=12.0
-SECONDARY_WEIGHT=3.0
-TERTIARY_WEIGHT=1.0
-```
-
-### Рецепты
-- Агрессивная смена темы (быстрее уходим в новый поиск):
-```env
-CATEGORY_MATCH_STRICT=true
-EFFECTS_MATCH_THRESHOLD=0.6
-FLAVORS_MATCH_THRESHOLD=0.5
-MEDICAL_MATCH_THRESHOLD=0.7
-```
-
-- Держаться контекста дольше (меньше expand_search):
-```env
-CATEGORY_MATCH_STRICT=false
-EFFECTS_MATCH_THRESHOLD=0.35
-FLAVORS_MATCH_THRESHOLD=0.25
-MEDICAL_MATCH_THRESHOLD=0.5
-```
-
-- Медицинский приоритет «жёстче» (safety-first):
-```env
-MEDICAL_WEIGHT=18.0
-SECONDARY_WEIGHT=2.5
-TERTIARY_WEIGHT=0.8
-```
-
-- Чувствительность к ароматам (например, ментол):
-```env
-FLAVORS_MATCH_THRESHOLD=0.5
-TERTIARY_WEIGHT=1.5
-```
-Замечание: aroma-точность также усиливается семантическим flavor rerank (эмбеддинги + Redis кэш), это включено всегда и не требует настроек.
-
-### Out-of-domain (вне тематики)
-- Включён лёгкий OOD-детектор на евристиках. При низкой доменной релевантности агент не делает поиск и предлагает вернуться к подбору сортов.
-- Порог: `DOMAIN_RELEVANCE_THRESHOLD` (0–1). Повышайте, если агент слишком часто уходит в нерелевантные ответы.
-
-### Диагностика
-- Логи: установите `LOG_LEVEL=DEBUG` для подробностей по policy hint/expand и применённым фильтрам/сортировке.
-- Быстрая проверка: прогоните сценарии из разделов «Context-Aware Strain Recommendations» и «Enhanced Chat API» с разными ENV.
-
-Границы: не ставьте пороги =1.0 (почти всегда будет expand_search) и не опускайте все пороги <0.2 (система перестанет адаптивно переключаться).
 
 ## 🛠 Commands
 
 ### Core Operations
 ```bash
 make start           # Start all services
-make stop            # Stop services  
+make stop            # Stop services
 make restart         # Restart everything
 make logs            # Real-time logs
 make status          # Check service status
@@ -329,59 +240,21 @@ docker compose exec api python scripts/init_database.py      # Full initializati
 docker compose exec api python scripts/sync_daily.py        # Incremental sync
 ```
 
-## 🏗 Context-Aware Architecture v2.0
+## 🏗 Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────────────────────┐    ┌─────────────────┐
-│   Cannamente    │    │          Canagent v2.0           │    │   Client App    │
-│   (Source DB)   │───▶│       (Context-Aware API)        │───▶│   (Frontend)    │
+│   Cannamente    │    │        Canagent v6.0             │    │   Client App    │
+│   (Source DB)   │───▶│   (Multilingual Hybrid RAG)      │───▶│   (Frontend)    │
 │                 │    │                                  │    │                 │
-│ - Strain data   │    │ 🧠 Intent Detection              │    │ - Session Mgmt  │
-│ - Feelings      │    │ 🔍 Adaptive Strain Search        │    │ - Multi-step UI │
-│ - Medical uses  │    │ 🔗 Vector Search + Filters       │    │ - Quick Actions │
-│ - Effects       │    │ 🤖 Unified LLM Processor         │    │ - Context UI    │
-│ - PostgreSQL    │    │ ⚡ Rule-based Fallback          │    │ - Session State │
-│                 │    │ 🔄 Session Management (Redis)    │    │                 │
-│                 │    │ ⚖️  Conflict Resolution          │    │                 │
-│                 │    │ 💾 Embedding Cache + TTL        │    │                 │
+│ - Strain data   │    │ 🌐 Dual Embeddings (EN/ES)      │    │ - Session Mgmt  │
+│ - Feelings      │    │ 🌿 Terpenes Support             │    │ - Multi-step UI │
+│ - Medical uses  │    │ 🔍 Hybrid Search (SQL+Vector)   │    │ - Quick Actions │
+│ - Effects       │    │ 🧠 Smart Query Executor v3.0    │    │ - Terpene Info  │
+│ - Terpenes      │    │ 🎯 Medical-First Scoring        │    │                 │
+│ - PostgreSQL    │    │ ⚡ Weighted Priority System     │    │                 │
 └─────────────────┘    └──────────────────────────────────┘    └─────────────────┘
 ```
-
-### 🎯 Context-Aware Conversation Flow:
-
-**1. Session Creation & Management**
-- User sends first message → Creates session with 4h TTL + 7-day backup
-- Follow-up messages use same session_id → Context preserved
-
-**2. Unified Analysis (Single LLM Call)**
-- Query type detection: `new_search|follow_up|comparison|reset|clarification`
-- Language detection: Spanish/English with session memory
-- Criteria extraction with conflict resolution
-
-**3. Adaptive Search Strategy (5-stage fallback)**
-- Stage 1: Strict filters (all criteria)
-- Stage 2: Relaxed effects (remove avoid filters)  
-- Stage 3: Categories only (no effects)
-- Stage 4: Semantic search (no filters)
-- Stage 5: Fallback (top strains)
-
-**4. Context-Aware Response Generation**
-- Session-aware responses (references previous recommendations)
-- Dynamic quick actions based on current strains and context
-- Warnings for resolved conflicts
-- Context-first selection with adaptive expand: follow-up filters apply to current session strains; if matches are insufficient per thresholds, the system expands search to DB automatically
-- Taxonomy normalization: multilingual synonyms for effects/negatives/helps_with/flavors are normalized for robust matching
-- Semantic flavor rerank: flavor matching boosted by embeddings with in-memory + Redis persistent cache
-
-**🆕 Key Features v2.0:**
-- ✅ **Conversational Memory**: Multi-step dialogs with context preservation
-- ✅ **Session Management**: 4-hour active sessions, 7-day preference backup  
-- ✅ **Unified LLM Processing**: Single API call vs 4-5 separate calls
-- ✅ **Rule-based Fallback**: Works without OpenAI for reliability
-- ✅ **Adaptive Search**: Never returns 0 results with 5-stage fallback
-- ✅ **Conflict Resolution**: Detects contradictions like "sleepy but energetic"
-- ✅ **Dynamic UI Support**: Quick actions, quality indicators, session restore
-- ✅ **Production Ready**: Proven with multi-step integration tests
 
 ## 🌐 API Endpoints
 
@@ -406,26 +279,26 @@ curl http://localhost:8001/api/v1/strains/1
 curl "http://localhost:8001/api/v1/strains/?limit=10&skip=0"
 ```
 
-### Enhanced Chat API with Intent Detection
+### Enhanced Chat API
 
 ```bash
-# Sleep/Relaxation Query
+# Sleep/Relaxation Query (Spanish)
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "I need something for sleep", "history": []}'
+  -d '{"message": "Necesito algo para dormir bien"}'
 
-# Energy/Focus Query  
+# Energy/Focus Query (English)
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "I need energy and focus for work", "history": []}'
+  -d '{"message": "I need energy and focus for work"}'
 
-# Pain Relief Query
+# Pain Relief Query with High THC
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
-  -d '{"message": "What helps with chronic pain?", "history": []}'
+  -d '{"message": "What helps with chronic pain? I prefer high THC strains"}'
 ```
 
-### Complete API Response Format (Optimized for Cannamente)
+### Complete API Response Format
 
 **All fields returned in `recommended_strains` array:**
 
@@ -436,24 +309,24 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
     {
       "id": 123,
       "name": "Northern Lights",
-      
+
       // Cannabinoid content
       "cbd": "0.10",        // CBD percentage (can be null)
-      "thc": "18.50",       // THC percentage  
+      "thc": "18.50",       // THC percentage
       "cbg": "1.00",        // CBG percentage (can be null)
-      
+
       // Classification
       "category": "Indica", // Indica/Sativa/Hybrid
-      
+
       // Navigation for cannamente UI
       "slug": "northern-lights",
       "url": "http://localhost:8000/strain/northern-lights/",
-      
-      // Effects and characteristics (arrays of objects with multiple values)
+
+      // Effects and characteristics (with energy_type)
       "feelings": [
-        {"name": "Sleepy"},
-        {"name": "Relaxed"},
-        {"name": "Hungry"}
+        {"name": "Sleepy", "energy_type": "relaxing"},
+        {"name": "Relaxed", "energy_type": "relaxing"},
+        {"name": "Hungry", "energy_type": "neutral"}
       ],
       "helps_with": [
         {"name": "Insomnia"},
@@ -462,26 +335,57 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
       ],
       "negatives": [
         {"name": "Dry mouth"},
-        {"name": "Dry eyes"},
-        {"name": "Dizzy"}
+        {"name": "Dry eyes"}
       ],
       "flavors": [
         {"name": "earthy"},
         {"name": "pine"},
         {"name": "sweet"}
+      ],
+      "terpenes": [
+        {"name": "Myrcene"},
+        {"name": "Pinene"},
+        {"name": "Caryophyllene"}
       ]
     }
   ],
-  "detected_intent": "sleep",
+
+  // AI analysis metadata
+  "detected_intent": "search_strains",
   "filters_applied": {
-    "preferred_categories": ["Indica"],
-    "required_feelings": ["Sleepy", "Relaxed"],
-    "exclude_feelings": ["Energetic", "Talkative"]
-  }
+    "filters": {...},      // Detailed filter criteria
+    "scoring": {...},      // Priority scoring rules
+    "sort": {...},         // Sorting configuration
+    "exclude_invalid": [], // Data quality filters
+    "limit": 5,
+    "reasoning": "...",    // AI reasoning explanation
+    "query": "...",        // Original query
+    "language": "es"
+  },
+
+  // Session management
+  "session_id": "uuid-here",
+  "query_type": "search_strains",
+  "language": "es",
+  "confidence": 0.95,
+
+  // UI enhancements
+  "quick_actions": [
+    "Ver el más potente",
+    "Ver el más suave",
+    "Comparar efectos"
+  ],
+
+  // Status flags
+  "is_restored": false,
+  "is_fallback": false,
+  "warnings": []
 }
 ```
 
 ### Field Reference for Cannamente Developers
+
+**Strain Object Fields (`recommended_strains` array):**
 
 | Field | Type | Description | Example | Required |
 |-------|------|-------------|---------|----------|
@@ -493,48 +397,35 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 | `category` | string/null | Strain type | `"Indica"`, `"Sativa"`, `"Hybrid"` | ❌ |
 | `slug` | string/null | URL-friendly identifier | `"northern-lights"` | ❌ |
 | `url` | string/null | Direct link to strain page | `"http://localhost:8000/strain/northern-lights/"` | ❌ |
-| `feelings` | array | Effects/sensations (typically 2-4 items) | `[{"name": "Sleepy"}, {"name": "Relaxed"}, {...}]` | ✅ |
-| `helps_with` | array | Medical uses/conditions (typically 2-4 items) | `[{"name": "Insomnia"}, {"name": "Stress"}, {...}]` | ✅ |
-| `negatives` | array | Side effects (typically 2-4 items) | `[{"name": "Dry mouth"}, {"name": "Dry eyes"}, {...}]` | ✅ |
-| `flavors` | array | Taste/aroma profiles (typically 2-4 items) | `[{"name": "earthy"}, {"name": "pine"}, {...}]` | ✅ |
+| `feelings` | array | Effects with energy type | `[{"name": "Sleepy", "energy_type": "relaxing"}]` | ✅ |
+| `helps_with` | array | Medical uses/conditions | `[{"name": "Insomnia"}]` | ✅ |
+| `negatives` | array | Side effects | `[{"name": "Dry mouth"}]` | ✅ |
+| `flavors` | array | Taste/aroma profiles | `[{"name": "earthy"}]` | ✅ |
+| `terpenes` | array | Terpene compounds | `[{"name": "Myrcene"}]` | ✅ |
 
-**🆕 Context-Aware Architecture v2.0 Response Fields:**
+**Top-Level Response Fields:**
 
 | Field | Type | Description | Example | Required |
 |-------|------|-------------|---------|----------|
-| `session_id` | string/null | Unique session identifier for multi-step conversations | `"b3ee3812-17b1-4b18-ba0a-4dc846ad01d3"` | ❌ |
-| `query_type` | string | Type of user query | `"new_search"`, `"follow_up"`, `"comparison"`, `"reset"`, `"clarification"` | ✅ |
-| `language` | string | Detected language | `"es"`, `"en"` | ✅ |
-| `confidence` | float | AI confidence level (0.0-1.0) | `0.95` | ✅ |
-| `quick_actions` | array | Dynamic contextual suggestions | `["Compare X and Y", "Show strongest", "Start new search"]` | ❌ |
-| `is_restored` | boolean | Session was restored from backup | `false` | ✅ |
-| `is_fallback` | boolean | Used rule-based fallback (no OpenAI) | `false` | ✅ |
-| `warnings` | array | Conflict resolution warnings | `["sleep aid"]` when user wants both sleep and energy | ❌ |
+| `response` | string | AI-generated text response | `"Based on your need..."` | ✅ |
+| `recommended_strains` | array | Array of strain objects | `[{...}, {...}]` | ✅ |
+| `detected_intent` | string | Primary action detected | `"search_strains"` | ✅ |
+| `filters_applied` | object | Detailed filter/scoring info | `{"filters": {...}}` | ✅ |
+| `session_id` | string | Session UUID | `"uuid-here"` | ✅ |
+| `query_type` | string | Query classification | `"search_strains"` | ✅ |
+| `language` | string | Detected language | `"es"` or `"en"` | ✅ |
+| `confidence` | float | Analysis confidence | `0.95` | ✅ |
+| `quick_actions` | array | Dynamic UI suggestions | `["Ver el más potente"]` | ❌ |
+| `is_restored` | boolean | Session restored flag | `false` | ❌ |
+| `is_fallback` | boolean | Fallback analysis used | `false` | ❌ |
+| `warnings` | array | Analysis warnings | `[]` | ❌ |
 
-**Fields removed for optimization (not included):**
-- `title` - duplicated `name`
-- `text_content` - too large, use `description`
-- `keywords` - SEO metadata not needed for UI
-- `img`, `img_alt_text` - not synced from source
-- `rating`, `active`, `top`, `main`, `is_review` - internal flags
-- `created_at`, `updated_at` - timestamps (kept in DB for sync)
-- `id`, `created_at` in relations - unnecessary for UI display
+**Nested Object Details:**
 
-### Intent Detection Examples
-
-The system automatically detects user intent and applies appropriate filtering:
-
-| Query | Detected Intent | Preferred Categories | Required Effects | Excluded Effects |
-|-------|-----------------|---------------------|------------------|------------------|
-| "I need sleep" | `sleep` | Indica, Hybrid | Sleepy, Relaxed, Hungry | Energetic, Talkative |
-| "Need energy for work" | `energy` | Sativa, Hybrid | Energetic, Uplifted | Sleepy, Relaxed |
-| "Help with anxiety" | `anxiety_relief` | Indica, Hybrid | Relaxed, Happy | Anxious, Paranoid |
-| "Creative inspiration" | `creativity` | Sativa, Hybrid | Creative, Euphoric | Sleepy |
-
-**Recent Improvements (v4.1):**
-- Sleep queries now return multiple options (e.g., Northern Lights + OG Kush)  
-- Energy queries include energizing Hybrids (e.g., Blue Dream + Sour Diesel)
-- All filters expanded to include relevant Hybrid strains for better variety
+- `feelings[].energy_type`: `"energizing"`, `"relaxing"`, or `"neutral"`
+- `filters_applied.filters`: Detailed filter criteria by field
+- `filters_applied.scoring`: Medical priority and weighting rules
+- `filters_applied.reasoning`: AI explanation of search strategy
 
 ## 📊 Monitoring & Performance
 
@@ -554,8 +445,9 @@ make check-db
 ```
 
 ### Performance Optimization
-- **Vector Search**: pgvector for efficient strain similarity search
-- **Smart Caching**: Similar queries cached for faster responses
+- **Hybrid Search**: SQL pre-filtering + vector reranking for optimal speed
+- **Dual Embeddings**: Language-specific embeddings for better relevance
+- **Smart Caching**: Embedding caching with TTL for faster responses
 - **Async Operations**: Non-blocking API calls
 - **Rate Limiting**: Protects against API abuse
 
@@ -569,8 +461,6 @@ make check-db
 | Local DB | 5433 | Application database | `DB_EXTERNAL_PORT` |
 | Cannamente DB | 5432 | Source data (external) | `CANNAMENTE_POSTGRES_PORT` |
 
-All ports are configurable via environment variables with sensible defaults.
-
 ## 🧪 Testing
 
 ### Automated Tests
@@ -578,7 +468,7 @@ All ports are configurable via environment variables with sensible defaults.
 # Run all tests
 make test
 
-# Tests include strain URL generation
+# Tests include multilingual support and terpenes
 python -m pytest tests/ -v
 ```
 
@@ -587,12 +477,13 @@ python -m pytest tests/ -v
 # Health check
 curl http://localhost:8001/api/v1/ping/
 
-# Strain search
+# Multilingual strain search (Spanish)
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
-  -d '{"message": "Best strain for creativity?"}'
+  -d '{"message": "Recomiéndame cepas para dormir con terpenos relajantes"}'
 
-# URL verification
-curl http://localhost:8001/api/v1/strains/1 | jq '.url'
+# Multilingual strain search (English)
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -d '{"message": "Recommend strains for sleep with relaxing terpenes"}'
 ```
 
 ## 🛡 Security & Production
@@ -628,11 +519,11 @@ make sync-strains
 ```
 
 ### Data Flow
-1. **Source**: Cannamente PostgreSQL (Spanish strain data)
+1. **Source**: Cannamente PostgreSQL (Spanish strain data + terpenes)
 2. **Sync**: Automatic data sync with change detection
-3. **Processing**: Vector embeddings generation for strain search
-4. **Storage**: Local PostgreSQL with pgvector
-5. **API**: Multi-language strain recommendations with URLs
+3. **Processing**: Dual vector embeddings generation (EN + ES) with terpenes
+4. **Storage**: Local PostgreSQL with pgvector and multilingual indexes
+5. **API**: Multi-language strain recommendations with terpenes and URLs
 
 ## 🗂 Project Structure
 
@@ -640,379 +531,105 @@ make sync-strains
 canagent/
 ├── app/                    # Application source code
 │   ├── api/               # REST API endpoints
-│   │   ├── chat.py       # 🆕 Context-Aware chat API with session support
+│   │   ├── chat.py       # Chat API with multilingual support
 │   │   ├── health.py     # Health checks and monitoring
 │   │   └── strains.py    # Strain management API
 │   ├── core/              # Core business logic
-│   │   ├── session_manager.py       # 🆕 Redis session management with backup
-│   │   ├── unified_processor.py     # 🆕 Single LLM call for complete analysis
-│   │   ├── fallback_analyzer.py     # 🆕 Rule-based analyzer (no OpenAI needed)
-│   │   ├── conflict_resolver.py     # 🆕 Criteria conflict detection & resolution
-│   │   ├── adaptive_search.py       # 🆕 5-stage adaptive search with fallback
-│   │   ├── optimized_rag_service.py # 🆕 Context-aware RAG service (main)
-│   │   ├── intent_detection.py      # Intent detection and filtering rules
-│   │   ├── rag_service.py          # Legacy RAG service (backup)
+│   │   ├── smart_rag_service.py      # Smart RAG Service v3.0 (main)
+│   │   ├── smart_query_analyzer.py   # AI query analysis with medical-first
+│   │   ├── universal_action_executor.py # Universal filtering + vector reranking
+│   │   ├── context_provider.py       # Full context building
+│   │   ├── rag_service.py           # Multilingual embedding generation
 │   │   ├── llm_interface.py        # OpenAI/Mock interface
 │   │   ├── cache.py                # Redis caching layer
 │   │   └── metrics.py              # Prometheus metrics
 │   ├── db/                # Database layer
-│   │   ├── database.py   # Connection management + new models
-│   │   └── repository.py # Enhanced repository with structured filtering
+│   │   ├── database.py   # Connection + multilingual models
+│   │   └── repository.py # Repository with hybrid search + terpenes
 │   ├── models/            # Data models
-│   │   ├── session.py    # 🆕 Session models (ConversationSession, UnifiedAnalysis)
-│   │   ├── database.py   # SQLAlchemy models (Strain + Relations)
-│   │   └── schemas.py    # 🆕 Extended Pydantic schemas (session_id, query_type, etc.)
+│   │   ├── database.py   # SQLAlchemy models (Strain + Terpenes)
+│   │   └── schemas.py    # Pydantic schemas (CompactStrain + CompactTerpene)
 │   └── utils/             # Utilities
-│       └── data_import.py # Sample data utilities
 ├── tests/                 # Test suite
-│   └── test_integration_dialog.py  # 🆕 Context-aware integration tests
 ├── scripts/               # Automation scripts
-│   ├── sync_strain_relations.py  # Full sync with structured data (working script)
+│   ├── sync_strain_relations.py  # Full sync with terpenes (working script)
 │   ├── init_database.py          # Production database initialization
 │   ├── sync_daily.py             # Daily incremental synchronization
-│   ├── common.py                 # Shared sync functions
-│   └── init_pgvector.sql         # pgvector extension setup
-├── docker-compose.yml     # 🆕 Docker configuration with Context-Aware env vars
-├── env.example           # 🆕 Updated with Context-Aware Architecture settings
+│   └── common.py                 # Shared sync functions
+├── migrations/            # Database migrations
+│   └── 001_init_multilingual_database.sql  # Unified multilingual migration
+├── docker-compose.yml     # Docker configuration
+├── env.example           # Environment variables template
 ├── Dockerfile            # Container definition
 ├── Makefile              # Command automation
 └── requirements.txt      # Python dependencies
 ```
 
-## 🚀 Deployment Options
-
-### Development
-```bash
-# Local development with mock responses
-MOCK_MODE=true make start
-```
-
-### Staging
-```bash
-# Local development with real OpenAI API
-MOCK_MODE=false make start
-```
-
-### Production
-```bash
-# Production deployment
-docker-compose -f docker-compose.prod.yml up -d
-```
-
 ## 📝 Changelog
 
-### 🚀 Current Version - v5.0 (Context-Aware Architecture v2.0) - LATEST
-**🎯 MAJOR RELEASE: Conversational AI with Session Management**
+### 🚀 v6.0 - Multilingual Hybrid RAG with Terpenes (January 2025) - LATEST
+**🎯 MAJOR RELEASE: Complete multilingual support with hybrid search and terpenes**
 
-- ✅ **Multi-step Conversations**: AI maintains context across questions in same session
-- ✅ **Session Management**: 4-hour active sessions + 7-day preference backup via Redis  
-- ✅ **Unified LLM Processing**: Single API call replaces 4-5 separate OpenAI requests
-- ✅ **Rule-based Fallback**: Reliable operation even without OpenAI API access
-- ✅ **Adaptive Search**: 5-stage fallback ensures no empty results (strict → relaxed → semantic → fallback)
-- ✅ **Conflict Resolution**: Detects & resolves contradictory criteria with user warnings
-- ✅ **Dynamic Quick Actions**: Context-aware UI suggestions based on conversation state
-- ✅ **Quality Indicators**: Session restore, fallback mode, and confidence metrics
-- ✅ **Enhanced API**: New fields - `session_id`, `query_type`, `language`, `confidence`, `quick_actions`, `warnings`
-- ✅ **Frontend Integration Guide**: Complete JavaScript implementation for cannamente developers
+- ✅ **STAGE 1: Multilingual Embeddings**
+  - Dual embeddings (`embedding_en`, `embedding_es`) for all 173 strains
+  - Unified migration `001_init_multilingual_database.sql` creates complete multilingual structure
+  - Automatic language detection with appropriate embedding selection
+  - All metadata available in English and Spanish
 
-**🎉 Problem Solved:**
-- **Before**: "Which one is strongest?" → New search, loses context ❌
-- **After**: "Which one is strongest?" → Compares previous recommendations ✅
+- ✅ **STAGE 2: Terpenes Support**
+  - 8 terpenes synced with 172 strain-terpene relationships
+  - Terpenes included in vector embeddings for improved semantic search
+  - `CompactTerpene` schema added to API responses
+  - Repository methods updated with `joinedload(StrainModel.terpenes)`
 
-### Previous Version - v4.1 (Enhanced Filtering & Stability) 
-- 🔧 **SQL Fix**: Resolved critical PostgreSQL DISTINCT/ORDER BY conflict in vector similarity queries
-- 🌿 **Better Sleep Recommendations**: Sleep queries now return multiple strains (Indica + appropriate Hybrids)
-- ⚡ **Better Energy Recommendations**: Energy queries now include energizing Hybrid strains (not just Sativa)
-- 📊 **More Variety**: All intent filters expanded to include relevant Hybrid strains for comprehensive results
-- 🔍 **Improved Query Structure**: Database queries restructured for better performance and stability
+- ✅ **STAGE 3: Hybrid Search (SQL + Vector Reranking)**
+  - `hybrid_search_strains()` method combining SQL pre-filtering with vector similarity
+  - SmartQueryAnalyzer adds `query` and `language` to ActionPlan parameters
+  - UniversalActionExecutor performs vector reranking on top candidates
+  - Combined scoring: Medical priority (50%) + Vector similarity (50%)
+  - Language-aware: Uses `embedding_es` for Spanish, `embedding_en` for English
 
-### Legacy Version - v4.0 (Intent-Aware Intelligence)
-- ✅ **Intent Detection**: Automatic detection of user needs (sleep/energy/focus/pain/anxiety)
-- ✅ **Structured Filtering**: Never recommends conflicting strains (e.g., energizing sativas for sleep)
-- ✅ **Rich Metadata**: Full strain effects, medical uses, flavors, and terpenes from cannamente
-- ✅ **Enhanced Sync**: `make sync-enhanced` syncs all structured data automatically
-- ✅ **Smart Recommendations**: 3-layer filtering (Intent → Structure → Vector)
-- ✅ **Detailed Responses**: Includes detected intent and applied filters
-- ✅ **Production Ready**: Automated sync, no manual database operations
+**Technical Improvements:**
+- ✅ Single unified migration for all multilingual features
+- ✅ Optimized database queries with proper `joinedload()` for terpenes
+- ✅ Vector reranking with configurable pool size (top 20 candidates)
+- ✅ Graceful fallback to SQL-only if embedding generation fails
+- ✅ Production-ready with comprehensive testing
+
+### v5.0 - Smart Query Executor v3.0 (December 2024)
+- ✅ AI-driven query analysis with medical-first prioritization
+- ✅ Universal action executor without hardcoded intent types
+- ✅ Penalty-based medical scoring for balanced recommendations
+- ✅ Automatic invalid data exclusion
+- ✅ Simplified codebase with legacy code removal
+
+### v4.1 - Enhanced Filtering & Stability
+- 🔧 SQL DISTINCT/ORDER BY conflict resolution
+- 🌿 Better sleep recommendations with Indica + Hybrid support
+- ⚡ Energy queries include energizing Hybrid strains
+- 📊 More variety with Hybrid strains in all intent filters
 
 ### Major Problem Solved ✨
-**Before**: "I need sleep" could return Sour Diesel (Sativa, Energetic, Talkative) ❌  
-**After**: "I need sleep" returns Northern Lights (Indica, Sleepy, Relaxed) ✅
+**Before v6.0**:
+- Single language embeddings
+- No terpenes information
+- Pure vector search without SQL pre-filtering
 
-### Migration from v3.x
-- **Enhanced API**: Responses now include `detected_intent` and `filters_applied`
-- **New Scripts**: Use `init_database.py` for initialization, `sync_daily.py` for updates
-- **Rich Data**: Strain responses include feelings, helps_with, negatives, flavors
-- **Backwards Compatible**: All existing endpoints continue to work
-- **New Configuration**: Added `CANNAMENTE_BASE_URL` and `STRAIN_URL_PATTERN`
-- **Response Format**: `recommended_strains` with URLs instead of generic products
-- **Database**: Strain-focused data model with full cannabis metadata
-
-### Breaking Changes
-- ❌ `/api/v1/products/` endpoint removed
-- ❌ `recommended_products` field removed from chat responses
-- ✅ Use `/api/v1/strains/` for browsing strains
-- ✅ Use `recommended_strains` field in chat responses
-
----
-
-## 🟢 Context-Aware Frontend Integration (Cannamente Developers)
-
-### Session Management Implementation Required
-
-To support the new Context-Aware Architecture v2.0, the cannamente frontend needs the following implementations:
-
-#### 1. Enhanced Session Manager
-
-```javascript
-// Add to your chat component or app.js
-class EnhancedSessionManager {
-    constructor() {
-        this.sessionId = this.getOrCreateSessionId();
-        this.isRestored = false;
-        this.language = null;
-        this.lastActivity = Date.now();
-    }
-    
-    getOrCreateSessionId() {
-        let sessionId = sessionStorage.getItem('canagent_session_id');
-        const lastActivity = sessionStorage.getItem('canagent_last_activity');
-        
-        // Check expiration (4 hours)
-        if (sessionId && lastActivity) {
-            const elapsed = Date.now() - parseInt(lastActivity);
-            if (elapsed > 4 * 60 * 60 * 1000) {
-                // Session expired but keep ID for restoration
-                this.isRestored = true;
-            }
-        }
-        
-        if (!sessionId) {
-            sessionId = this.generateUUID();
-        }
-        
-        sessionStorage.setItem('canagent_session_id', sessionId);
-        this.updateActivity();
-        
-        return sessionId;
-    }
-    
-    updateActivity() {
-        this.lastActivity = Date.now();
-        sessionStorage.setItem('canagent_last_activity', this.lastActivity.toString());
-    }
-    
-    reset() {
-        // Soft reset - new ID but context preservation
-        sessionStorage.setItem('canagent_session_id', this.generateUUID());
-        this.updateActivity();
-        this.isRestored = false;
-    }
-    
-    generateUUID() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0;
-            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
-    }
-}
-```
-
-#### 2. Updated API Calls
-
-```javascript
-// Modify your existing API calls to include session_id
-async function sendMessage(message) {
-    const response = await fetch('/api/v1/chat/ask/', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            message: message,
-            session_id: sessionManager.sessionId,     // ADD THIS
-            history: getRecentHistory(),              // Your existing history
-            source_platform: 'cannamente'            // ADD THIS
-        })
-    });
-    
-    const data = await response.json();
-    
-    // Handle context-aware response indicators
-    if (data.is_restored) {
-        showNotification('Conversación restaurada / Session restored');
-    }
-    
-    if (data.is_fallback) {
-        showNotification('Modo offline / Offline mode');
-    }
-    
-    // Update session ID if changed
-    if (data.session_id) {
-        sessionManager.sessionId = data.session_id;
-    }
-    
-    return data;
-}
-```
-
-#### 3. Enhanced Response Handling
-
-```javascript
-// Handle new response fields from Context-Aware API
-function renderResponse(response) {
-    // Your existing rendering logic...
-    
-    // NEW: Handle query types for better UX
-    switch (response.query_type) {
-        case 'follow_up':
-            renderFollowUpResponse(response);
-            break;
-        case 'comparison':
-            renderComparisonResponse(response);
-            break;
-        case 'clarification':
-            renderClarificationResponse(response);
-            break;
-        case 'reset':
-            clearChatHistory();
-            renderNewSearchResponse(response);
-            break;
-        default:
-            renderStandardResponse(response);
-    }
-    
-    // NEW: Show quick actions if available
-    if (response.quick_actions?.length > 0) {
-        renderQuickActions(response.quick_actions);
-    }
-    
-    // NEW: Show quality indicators
-    showQualityIndicators(response);
-}
-
-function renderQuickActions(actions) {
-    const container = document.getElementById('quick-actions');
-    container.innerHTML = actions.map(action => `
-        <button class="quick-action-btn" onclick="sendMessage('${action}')">
-            ${action}
-        </button>
-    `).join('');
-}
-
-function showQualityIndicators(response) {
-    let indicators = [];
-    
-    if (response.is_restored) {
-        indicators.push({type: 'info', text: 'Sesión restaurada'});
-    }
-    
-    if (response.is_fallback) {
-        indicators.push({type: 'warning', text: 'Modo básico'});
-    }
-    
-    if (response.confidence < 0.7) {
-        indicators.push({
-            type: 'caution', 
-            text: `Confianza: ${Math.round(response.confidence * 100)}%`
-        });
-    }
-    
-    if (response.warnings?.length > 0) {
-        indicators.push({
-            type: 'warning',
-            text: `Conflictos resueltos: ${response.warnings.length}`
-        });
-    }
-    
-    // Render indicators in your UI
-    renderIndicators(indicators);
-}
-```
-
-#### 4. Reset Functionality
-
-```javascript
-// Add reset button to your chat UI
-function resetConversation() {
-    // Send reset command
-    sendMessage('Empezar nueva búsqueda').then(response => {
-        // Clear local chat history
-        clearChatHistory();
-        
-        // Reset session manager
-        sessionManager.reset();
-        
-        // Show fresh start message
-        renderResponse(response);
-    });
-}
-
-// Add button to your HTML
-// <button onclick="resetConversation()">Nueva consulta</button>
-```
-
-#### 5. Multi-step Dialog Support
-
-```javascript
-// Your chat should now support follow-up questions
-// Example conversation flow:
-
-// User: "Necesito algo para dormir"
-// Bot: Returns Indica strains + session_id
-
-// User: "¿Cuál de estos es más fuerte?" 
-// → API automatically uses session_id and works with previous recommendations
-
-// User: "¿Hay algo más suave?"
-// → API continues with same session context
-
-// User: "Empezar nueva búsqueda" 
-// → API resets context, starts fresh
-```
-
-### Integration Checklist for Cannamente Developers
-
-**Required Changes:**
-- [ ] ✅ **Session Management**: Implement `EnhancedSessionManager` class
-- [ ] ✅ **API Updates**: Add `session_id` and `source_platform` to API calls  
-- [ ] ✅ **Response Handling**: Handle new fields (`query_type`, `quick_actions`, `is_restored`, `is_fallback`, `warnings`)
-- [ ] ✅ **Reset Button**: Add "Nueva consulta" button with reset functionality
-- [ ] ✅ **Quality Indicators**: Show session status and confidence indicators
-- [ ] ✅ **Quick Actions**: Render and handle dynamic quick action buttons
-
-**Optional Enhancements:**
-- [ ] 🔄 **Typing Indicators**: Show when AI is thinking vs fallback mode
-- [ ] 🎯 **Smart Suggestions**: Use `quick_actions` for auto-complete
-- [ ] 📊 **Analytics**: Track session lengths and success rates
-- [ ] 🌐 **Language Switching**: Handle language changes within same session
-
-### Benefits for Cannamente Users
-
-✅ **Better Conversations**: "¿Cuál es mejor?" works without repeating context  
-✅ **Smart Memory**: AI remembers previous recommendations in same session  
-✅ **Language Flexibility**: Switch between Spanish/English mid-conversation  
-✅ **Conflict Resolution**: "Algo relajante pero energético" → AI resolves contradictions  
-✅ **Session Recovery**: Restore context after brief disconnections  
-✅ **Offline Fallback**: Basic functionality even when OpenAI is unavailable  
-
-### Configuration
-
-```env
-# Ensure Context-Aware Architecture is enabled
-USE_CONTEXTUAL_RAG=true
-SESSION_TTL_HOURS=4
-SESSION_BACKUP_DAYS=7
-```
+**After v6.0**:
+- Dual embeddings for English & Spanish queries
+- Complete terpenes data with 172 relationships
+- Hybrid search (SQL + Vector) for optimal results
 
 ---
 
 ## 🎯 Ready to Use!
 
-**Quick start:** `make start` and begin making API calls to get strain recommendations with URLs.
+**Quick start:** `make start` and begin making API calls to get multilingual strain recommendations with terpenes.
 
-**Integration:** Configure your cannamente domain and start receiving clickable strain links.
+**Integration:** Configure your cannamente domain and start receiving clickable strain links with complete terpene information.
 
 **Documentation:** All endpoints documented with examples above.
 
 **Support:** Check logs with `make logs` or status with `make status`.
 
-**Community:** This is a modern, production-ready AI strain recommendation system with seamless cannamente integration. 🌿
+**Community:** This is a modern, production-ready AI strain recommendation system with multilingual support, terpenes integration, and hybrid search capabilities. 🌿

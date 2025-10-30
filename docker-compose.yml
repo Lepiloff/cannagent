@@ -4,7 +4,10 @@
 services:
   # Local PostgreSQL with pgvector
   db:
-    image: pgvector/pgvector:pg15
+    build:
+      context: .
+      dockerfile: docker/postgres-pgvector.Dockerfile
+    image: canagent-postgres-pgvector:latest
     environment:
       POSTGRES_DB: ai_budtender
       POSTGRES_USER: ai_user
@@ -13,7 +16,7 @@ services:
       - "5433:5432"  # Different port to avoid conflicts
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01-init.sql
+      # Migrations will be applied by sync scripts, not at container startup
     networks:
       - ai_budtender_network
     healthcheck:

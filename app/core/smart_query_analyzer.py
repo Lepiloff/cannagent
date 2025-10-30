@@ -312,13 +312,19 @@ KEY PRINCIPLES:
     
     def _parse_llm_result(self, raw_result: Dict[str, Any], original_query: str) -> SmartAnalysis:
         """Парсинг и валидация результата LLM"""
-        
+
         try:
             # Создание ActionPlan
             action_data = raw_result.get("action_plan", {})
+            parameters = action_data.get("parameters", {})
+
+            # STAGE 3: Add query and language to parameters for vector reranking
+            parameters["query"] = original_query
+            parameters["language"] = raw_result.get("detected_language", "es")
+
             action_plan = ActionPlan(
                 primary_action=action_data.get("primary_action", "explain_strains"),
-                parameters=action_data.get("parameters", {}),
+                parameters=parameters,
                 reasoning=action_data.get("parameters", {}).get("reasoning", "Default reasoning")
             )
             
@@ -387,12 +393,16 @@ KEY PRINCIPLES:
                 "reasoning": "No session context, need to search for new strains"
             })
         
+        # STAGE 3: Add query and language to parameters for vector reranking
+        parameters["query"] = user_query
+        parameters["language"] = detected_language
+
         # Создание fallback ответа
         responses = {
             'es': "Permíteme ayudarte con eso basándome en las opciones disponibles.",
             'en': "Let me help you with that based on the available options."
         }
-        
+
         action_plan = ActionPlan(
             primary_action=action,
             parameters=parameters,

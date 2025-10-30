@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Set, Any
 from pydantic import BaseModel, Field
-from app.core.intent_detection import IntentType
 import uuid
 import json
 
@@ -17,11 +16,11 @@ class ConversationSession(BaseModel):
     
     # История с ограничением (максимум 20 групп рекомендаций)
     recommended_strains_history: List[List[int]] = Field(
-        default_factory=list, 
+        default_factory=list,
         description="History of recommended strain IDs (max 20)"
     )
-    current_topic: Optional[IntentType] = Field(default=None, description="Current conversation topic")
-    previous_topics: List[IntentType] = Field(default_factory=list, description="Previous topics in session")
+    current_topic: Optional[str] = Field(default=None, description="Current conversation topic")
+    previous_topics: List[str] = Field(default_factory=list, description="Previous topics in session")
     
     # Накопленные предпочтения пользователя
     user_preferences: Dict[str, Set[str]] = Field(
@@ -36,10 +35,9 @@ class ConversationSession(BaseModel):
     )
     
     class Config:
-        # Для корректной сериализации Set и IntentType
+        # Для корректной сериализации Set
         json_encoders = {
-            set: list,
-            IntentType: lambda v: v.value if v else None
+            set: list
         }
     
     def has_strains(self) -> bool:
@@ -60,20 +58,20 @@ class ConversationSession(BaseModel):
             if len(self.recommended_strains_history) > 20:
                 self.recommended_strains_history = self.recommended_strains_history[-20:]
     
-    def add_conversation_entry(self, query: str, response: str, intent: Optional[IntentType] = None):
+    def add_conversation_entry(self, query: str, response: str, intent: Optional[str] = None):
         """Добавить запись в историю разговора"""
         entry = {
             "timestamp": datetime.now().isoformat(),
             "query": query,
             "response": response,
-            "intent": intent.value if intent else None
+            "intent": intent
         }
         self.conversation_history.append(entry)
         # Ограничиваем историю максимум 50 записями
         if len(self.conversation_history) > 50:
             self.conversation_history = self.conversation_history[-50:]
     
-    def update_topic(self, new_topic: IntentType):
+    def update_topic(self, new_topic: str):
         """Обновить текущую тему разговора"""
         if self.current_topic and self.current_topic != new_topic:
             self.previous_topics.append(self.current_topic)
@@ -94,56 +92,30 @@ class ConversationSession(BaseModel):
     
     def to_json(self) -> str:
         """Сериализация в JSON для Redis"""
-        # Конвертируем Set в list и IntentType в строку для JSON
+        # Конвертируем Set в list для JSON
         data = self.dict()
-        
+
         # Обработка user_preferences (Set -> List)
         if data.get('user_preferences'):
             data['user_preferences'] = {
-                k: list(v) if isinstance(v, set) else v 
+                k: list(v) if isinstance(v, set) else v
                 for k, v in data['user_preferences'].items()
             }
-        
-        # Обработка IntentType
-        if data.get('current_topic'):
-            data['current_topic'] = data['current_topic'].value if hasattr(data['current_topic'], 'value') else data['current_topic']
-        
-        if data.get('previous_topics'):
-            data['previous_topics'] = [
-                topic.value if hasattr(topic, 'value') else topic 
-                for topic in data['previous_topics']
-            ]
-        
+
         return json.dumps(data, default=str)
     
     @classmethod
     def from_json(cls, json_str: str) -> 'ConversationSession':
         """Десериализация из JSON"""
         data = json.loads(json_str)
-        
+
         # Восстановление Set из list
         if data.get('user_preferences'):
             data['user_preferences'] = {
-                k: set(v) if isinstance(v, list) else v 
+                k: set(v) if isinstance(v, list) else v
                 for k, v in data['user_preferences'].items()
             }
-        
-        # Восстановление IntentType из строки
-        if data.get('current_topic'):
-            try:
-                data['current_topic'] = IntentType(data['current_topic'])
-            except (ValueError, TypeError):
-                data['current_topic'] = None
-        
-        if data.get('previous_topics'):
-            restored_topics = []
-            for topic in data['previous_topics']:
-                try:
-                    restored_topics.append(IntentType(topic))
-                except (ValueError, TypeError):
-                    continue
-            data['previous_topics'] = restored_topics
-        
+
         # Восстановление datetime из строки
         for field in ['created_at', 'last_activity']:
             if data.get(field) and isinstance(data[field], str):
@@ -151,7 +123,7 @@ class ConversationSession(BaseModel):
                     data[field] = datetime.fromisoformat(data[field])
                 except ValueError:
                     data[field] = datetime.now()
-        
+
         return cls(**data)
     
     @classmethod

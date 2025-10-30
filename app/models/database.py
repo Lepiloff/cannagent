@@ -53,38 +53,56 @@ strain_terpenes_table = Table(
 class Strain(Base):
     """Strain model matching cannamente Django structure with vector representation"""
     __tablename__ = "strains_strain"  # Django table name
-    
+
     id = Column(Integer, primary_key=True, index=True)
+
+    # Legacy fields (for backward compatibility)
     name = Column(String(255), nullable=False, index=True)
     title = Column(String(255), nullable=True)
     text_content = Column(Text, nullable=True)  # HTMLField equivalent
     description = Column(Text, nullable=True)
     keywords = Column(String(255), nullable=True)
-    
+
+    # Multilingual content fields (NEW)
+    name_en = Column(String(255), nullable=True)
+    name_es = Column(String(255), nullable=True)
+    title_en = Column(String(255), nullable=True)
+    title_es = Column(String(255), nullable=True)
+    description_en = Column(Text, nullable=True)
+    description_es = Column(Text, nullable=True)
+    text_content_en = Column(Text, nullable=True)
+    text_content_es = Column(Text, nullable=True)
+    keywords_en = Column(String(255), nullable=True)
+    keywords_es = Column(String(255), nullable=True)
+
     # Cannabinoid content
     cbd = Column(Numeric(5, 2), nullable=True)
     thc = Column(Numeric(5, 2), nullable=True)
     cbg = Column(Numeric(5, 2), nullable=True)
-    
+
     # Rating and category
     rating = Column(Numeric(3, 1), nullable=True)
     category = Column(String(10), nullable=True)  # Hybrid, Sativa, Indica
-    
+
     # Image fields
     img = Column(String(255), nullable=True)  # Image path
     img_alt_text = Column(String(255), nullable=True)
-    
+
     # Flags
     active = Column(Boolean, default=False)
     top = Column(Boolean, default=False)
     main = Column(Boolean, default=False)
     is_review = Column(Boolean, default=False)
-    
+
     # Slug for URL
     slug = Column(String(255), unique=True, nullable=True)
-    
-    # Vector embedding for semantic search
+
+    # Vector embeddings for semantic search
+    # Legacy field (for backward compatibility)
     embedding = Column(Vector(int(os.getenv('VECTOR_DIMENSION', '1536'))), nullable=True)
+    # Dual embeddings for multilingual support (NEW)
+    embedding_en = Column(Vector(int(os.getenv('VECTOR_DIMENSION', '1536'))), nullable=True)
+    embedding_es = Column(Vector(int(os.getenv('VECTOR_DIMENSION', '1536'))), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
@@ -120,15 +138,20 @@ class Product(Base):
 class Feeling(Base):
     """Strain feelings/effects (e.g., Relaxed, Energetic, Creative)"""
     __tablename__ = "feelings"
-    
+
     id = Column(Integer, primary_key=True, index=True)
+    # Legacy field (for backward compatibility)
     name = Column(String(50), unique=True, nullable=False)
+    # Multilingual fields (NEW)
+    name_en = Column(String(50), nullable=True)
+    name_es = Column(String(50), nullable=True)
+
     energy_type = Column(String(20), nullable=False)  # energizing, relaxing, neutral
     created_at = Column(DateTime, server_default=func.now())
-    
+
     # Relationships
     strains = relationship('Strain', secondary=strain_feelings_table, back_populates='feelings')
-    
+
     def __repr__(self):
         return f"<Feeling(id={self.id}, name='{self.name}', energy_type='{self.energy_type}')>"
 
@@ -136,14 +159,19 @@ class Feeling(Base):
 class HelpsWith(Base):
     """Medical conditions/uses that strains help with"""
     __tablename__ = "helps_with"
-    
+
     id = Column(Integer, primary_key=True, index=True)
+    # Legacy field (for backward compatibility)
     name = Column(String(100), unique=True, nullable=False)
+    # Multilingual fields (NEW)
+    name_en = Column(String(100), nullable=True)
+    name_es = Column(String(100), nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
-    
+
     # Relationships
     strains = relationship('Strain', secondary=strain_helps_with_table, back_populates='helps_with')
-    
+
     def __repr__(self):
         return f"<HelpsWith(id={self.id}, name='{self.name}')>"
 
@@ -151,14 +179,19 @@ class HelpsWith(Base):
 class Negative(Base):
     """Negative side effects"""
     __tablename__ = "negatives"
-    
+
     id = Column(Integer, primary_key=True, index=True)
+    # Legacy field (for backward compatibility)
     name = Column(String(50), unique=True, nullable=False)
+    # Multilingual fields (NEW)
+    name_en = Column(String(50), nullable=True)
+    name_es = Column(String(50), nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
-    
+
     # Relationships
     strains = relationship('Strain', secondary=strain_negatives_table, back_populates='negatives')
-    
+
     def __repr__(self):
         return f"<Negative(id={self.id}, name='{self.name}')>"
 
@@ -166,14 +199,19 @@ class Negative(Base):
 class Flavor(Base):
     """Strain flavors and taste profiles"""
     __tablename__ = "flavors"
-    
+
     id = Column(Integer, primary_key=True, index=True)
+    # Legacy field (for backward compatibility)
     name = Column(String(50), unique=True, nullable=False)
+    # Multilingual fields (NEW)
+    name_en = Column(String(50), nullable=True)
+    name_es = Column(String(50), nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
-    
+
     # Relationships
     strains = relationship('Strain', secondary=strain_flavors_table, back_populates='flavors')
-    
+
     def __repr__(self):
         return f"<Flavor(id={self.id}, name='{self.name}')>"
 
@@ -181,14 +219,19 @@ class Flavor(Base):
 class Terpene(Base):
     """Terpenes found in strains"""
     __tablename__ = "terpenes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False)
+    name = Column(String(50), unique=True, nullable=False)  # Single language (scientific name)
+    # Legacy description field
     description = Column(Text, nullable=True)
+    # Multilingual descriptions (NEW)
+    description_en = Column(Text, nullable=True)
+    description_es = Column(Text, nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
-    
+
     # Relationships
     strains = relationship('Strain', secondary=strain_terpenes_table, back_populates='terpenes')
-    
+
     def __repr__(self):
         return f"<Terpene(id={self.id}, name='{self.name}')>" 

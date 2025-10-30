@@ -8,7 +8,6 @@ from app.core.universal_action_executor import UniversalActionExecutor
 from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
 from app.core.llm_interface import get_llm
-from app.core.intent_detection import IntentType
 from app.core.dialog_policy import extract_request_signals, decide_action_hint, detect_language, evaluate_domain_relevance
 import os
 
@@ -296,9 +295,9 @@ class SmartRAGService:
         if analysis.action_plan.primary_action == 'expand_search':
             # Новый поиск - возможно смена темы
             if 'sleep' in query.lower() or 'dormir' in query.lower():
-                session.update_topic(IntentType.SLEEP)
+                session.update_topic("sleep")
             elif 'energy' in query.lower() or 'energía' in query.lower():
-                session.update_topic(IntentType.ENERGY)
+                session.update_topic("energy")
         
         # Обновление предпочтений (если есть в параметрах действия)
         if 'criteria' in analysis.action_plan.parameters:
@@ -334,7 +333,7 @@ class SmartRAGService:
                 category=strain.category,
                 slug=strain.slug,
                 url=self._build_strain_url(strain.slug or ""),
-                feelings=[CompactFeeling(name=f.name) for f in strain.feelings] if strain.feelings else [],
+                feelings=[CompactFeeling(name=f.name, energy_type=f.energy_type) for f in strain.feelings] if strain.feelings else [],
                 helps_with=[CompactHelpsWith(name=h.name) for h in strain.helps_with] if strain.helps_with else [],
                 negatives=[CompactNegative(name=n.name) for n in strain.negatives] if strain.negatives else [],
                 flavors=[CompactFlavor(name=fl.name) for fl in strain.flavors] if strain.flavors else []
@@ -342,7 +341,7 @@ class SmartRAGService:
             compact_strains.append(compact_strain)
         
         return compact_strains
-    
+
     def _substitute_strain_placeholders(self, response_text: str, strains: List[Strain]) -> str:
         """Заменяет плейсхолдеры [strain_name], [Strain Name] на реальные названия сортов"""
         

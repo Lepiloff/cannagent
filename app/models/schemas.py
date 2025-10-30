@@ -115,6 +115,7 @@ class Strain(StrainBase):
 # Compact schemas for chat API responses (optimized for cannamente UI)
 class CompactFeeling(BaseModel):
     name: str = Field(..., description="Feeling name")
+    energy_type: Optional[str] = Field(None, description="Energy type: energizing, relaxing, or neutral")
 
 class CompactHelpsWith(BaseModel):
     name: str = Field(..., description="Medical condition")
@@ -124,6 +125,10 @@ class CompactNegative(BaseModel):
 
 class CompactFlavor(BaseModel):
     name: str = Field(..., description="Flavor name")
+
+class CompactTerpene(BaseModel):
+    """STAGE 2: Compact terpene schema for API responses"""
+    name: str = Field(..., description="Terpene name")
 
 class CompactStrain(BaseModel):
     """Optimized strain schema for chat API responses - excludes unnecessary fields"""
@@ -147,6 +152,7 @@ class CompactStrain(BaseModel):
     helps_with: List[CompactHelpsWith] = Field(default_factory=list, description="Medical uses")
     negatives: List[CompactNegative] = Field(default_factory=list, description="Side effects")
     flavors: List[CompactFlavor] = Field(default_factory=list, description="Flavors")
+    terpenes: List[CompactTerpene] = Field(default_factory=list, description="Terpenes (STAGE 2)")
 
 
 class ChatRequest(BaseModel):
