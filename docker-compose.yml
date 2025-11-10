@@ -1,30 +1,7 @@
 # Docker Compose file for AI Budtender
-# Uses local PostgreSQL with pgvector for development
+# Uses external cannamente PostgreSQL database directly
 
 services:
-  # Local PostgreSQL with pgvector
-  db:
-    build:
-      context: .
-      dockerfile: docker/postgres-pgvector.Dockerfile
-    image: canagent-postgres-pgvector:latest
-    environment:
-      POSTGRES_DB: ai_budtender
-      POSTGRES_USER: ai_user
-      POSTGRES_PASSWORD: ai_password
-    ports:
-      - "5433:5432"  # Different port to avoid conflicts
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      # Migrations will be applied by sync scripts, not at container startup
-    networks:
-      - ai_budtender_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ai_user -d ai_budtender"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # API service
   api:
     build: .
@@ -32,24 +9,16 @@ services:
       - "8001:8000"  # Changed port to avoid conflict with cannamente
       - "9091:9090"  # Changed metrics port to avoid conflict
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://ai_user:ai_password@db:5432/ai_budtender
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=ai_budtender
-      - POSTGRES_USER=ai_user
-      - POSTGRES_PASSWORD=ai_password
-      # Cannamente Database Configuration (External source database)
-      - CANNAMENTE_DATABASE_URL=${CANNAMENTE_DATABASE_URL:-postgresql://myuser:mypassword@host.docker.internal:5432/mydatabase}
-      - CANNAMENTE_POSTGRES_HOST=${CANNAMENTE_POSTGRES_HOST:-host.docker.internal}
-      - CANNAMENTE_POSTGRES_PORT=${CANNAMENTE_POSTGRES_PORT:-5432}
-      - CANNAMENTE_POSTGRES_DB=${CANNAMENTE_POSTGRES_DB:-mydatabase}
-      - CANNAMENTE_POSTGRES_USER=${CANNAMENTE_POSTGRES_USER:-myuser}
-      - CANNAMENTE_POSTGRES_PASSWORD=${CANNAMENTE_POSTGRES_PASSWORD:-mypassword}
+      # Primary Database - cannamente (directly from .env)
+      - DATABASE_URL=${DATABASE_URL}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MOCK_MODE=${MOCK_MODE}
       - REDIS_HOST=${REDIS_HOST}
@@ -77,6 +46,8 @@ services:
       - USE_SMART_EXECUTOR=true
       - SMART_EXECUTOR_TIMEOUT=${SMART_EXECUTOR_TIMEOUT:-5000}
       - SMART_EXECUTOR_FALLBACK=${SMART_EXECUTOR_FALLBACK:-true}
+      # Streamlined RAG v4.0
+      - USE_STREAMLINED_RAG=${USE_STREAMLINED_RAG:-false}
       - ANALYSIS_CACHE_TTL=${ANALYSIS_CACHE_TTL:-1800}
       - MAX_CONTEXT_TOKENS=${MAX_CONTEXT_TOKENS:-4000}
       - MIN_CONFIDENCE_THRESHOLD=${MIN_CONFIDENCE_THRESHOLD:-0.3}
@@ -86,6 +57,7 @@ services:
       - ENABLE_AI_REASONING_DEBUG=${ENABLE_AI_REASONING_DEBUG:-false}
     volumes:
       - ./app:/app/app
+      - ./scripts:/app/scripts
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini
       - ./tests:/app/tests
@@ -93,7 +65,7 @@ services:
       - ai_budtender_network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-      - "cannamente-db:172.17.0.1"
+      - "cannamente-db:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/ping/"]
       interval: 30s
@@ -117,7 +89,6 @@ services:
       retries: 3
 
 volumes:
-  postgres_data:
   redis_data:
 
 networks:

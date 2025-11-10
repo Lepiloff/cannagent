@@ -206,8 +206,6 @@ class RAGService:
             # Update strain with embeddings
             if embedding_en:
                 strain.embedding_en = embedding_en
-                # Also update legacy field for backward compatibility
-                strain.embedding = embedding_en
 
             if embedding_es:
                 strain.embedding_es = embedding_es

@@ -2,6 +2,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from app.models.session import ConversationSession
 from app.models.schemas import ChatResponse, CompactStrain, CompactFeeling, CompactHelpsWith, CompactNegative, CompactFlavor, Strain
+from app.models.database import Strain as StrainModel  # For direct DB queries
 from app.core.smart_query_analyzer import SmartQueryAnalyzer, SmartAnalysis
 from app.core.context_provider import ContextProvider
 from app.core.universal_action_executor import UniversalActionExecutor
@@ -9,6 +10,12 @@ from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
 from app.core.llm_interface import get_llm
 from app.core.dialog_policy import extract_request_signals, decide_action_hint, detect_language, evaluate_domain_relevance
+
+# Streamlined Architecture Components (v4.0)
+from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysis
+from app.core.category_filter import FilterFactory, FilterChain
+from app.core.vector_search_service import VectorSearchService
+
 import os
 
 logger = logging.getLogger(__name__)
@@ -28,16 +35,26 @@ class SmartRAGService:
     def __init__(self, repository: StrainRepository):
         self.repository = repository
         self.session_manager = get_session_manager()
-        
+
         # Инициализация компонентов v3.0
         self.llm_interface = get_llm()
         self.smart_analyzer = SmartQueryAnalyzer(self.llm_interface)
         self.context_provider = ContextProvider(repository)
         self.action_executor = UniversalActionExecutor(repository)
-        
+
+        # Streamlined Architecture v4.0 (Feature Flag)
+        self.use_streamlined_rag = os.getenv('USE_STREAMLINED_RAG', 'false').lower() == 'true'
+        if self.use_streamlined_rag:
+            logger.info("🚀 Streamlined RAG v4.0 ENABLED - Using simplified category filter + vector search")
+            self.streamlined_analyzer = StreamlinedQueryAnalyzer(self.llm_interface)
+            self.vector_search = VectorSearchService(self.llm_interface, repository.db)
+            self.filter_factory = FilterFactory()
+        else:
+            logger.info("Using Smart Query Executor v3.0")
+
         # Проверка включения Smart Query Executor
         self.use_smart_executor = os.getenv('USE_SMART_EXECUTOR', 'true').lower() == 'true'
-        
+
         if not self.use_smart_executor:
             logger.warning("Smart Query Executor disabled, falling back to legacy mode")
     
@@ -51,13 +68,17 @@ class SmartRAGService:
         """
         Главный метод обработки запросов с Smart Query Executor v3.0
         """
-        
+
         logger.info(f"Processing query with Smart RAG v3.0: {query[:50]}...")
-        
+
         # 1. Управление сессией
         session = self.session_manager.get_or_restore_session(session_id)
-        
-        # 2. Проверка использования Smart Executor
+
+        # 2. Route to Streamlined RAG v4.0 if enabled
+        if self.use_streamlined_rag:
+            return self._streamlined_process_query(query, session)
+
+        # 3. Проверка использования Smart Executor
         if not self.use_smart_executor:
             # Fallback к legacy обработке
             return self._legacy_process_query(query, session)
@@ -172,7 +193,518 @@ class SmartRAGService:
         
         # 12. Построение ответа
         return self._build_smart_response(smart_analysis, result_strains, session)
-    
+
+    def _streamlined_process_query(
+        self,
+        query: str,
+        session: ConversationSession
+    ) -> ChatResponse:
+        """
+        Streamlined RAG v4.0 - Упрощённая обработка запросов
+
+        Архитектура:
+        1. Minimal LLM prompt: только category detection + natural response
+        2. Simple SQL filter: только по категории (если детектирована)
+        3. Vector search: основной метод поиска (batch-optimized)
+
+        Преимущества:
+        - Меньше токенов в промпте (~50 строк вместо 278)
+        - Быстрее: batch vector search вместо N+1 queries
+        - Проще: нет сложной генерации SQL фильтров
+        - Расширяемо: легко добавить CBD/terpene фильтры
+        """
+
+        logger.info(f"🚀 Streamlined RAG v4.0: Processing query '{query[:50]}...'")
+
+        # Получаем session context для анализа
+        session_context = self._build_session_context(session)
+
+        # Step 1: Minimal LLM analysis (category + natural response + follow-up detection)
+        try:
+            # Get session strains for context-aware analysis
+            session_strains = self._get_session_strains(session)
+
+            # Build context with previous strains
+            analysis_context = session_context.copy()
+            if session_strains:
+                analysis_context['recommended_strains'] = [
+                    f"{s.name} ({s.category}, THC: {s.thc}%)"
+                    for s in session_strains[:5]
+                ]
+            else:
+                analysis_context['recommended_strains'] = []
+
+            logger.info(f"Context for LLM: strains={len(session_strains)}, recommended_strains={analysis_context['recommended_strains']}")
+
+            analysis = self.streamlined_analyzer.analyze_query(
+                user_query=query,
+                session_context=analysis_context,
+                found_strains=None  # Will be filled after search
+            )
+            logger.info(f"Analysis: category={analysis.detected_category}, is_follow_up={analysis.is_follow_up}, language={analysis.detected_language}")
+        except Exception as e:
+            logger.error(f"Streamlined analysis failed: {e}", exc_info=True)
+            # Fallback to empty analysis
+            analysis = QueryAnalysis(
+                detected_category=None,
+                thc_level=None,
+                cbd_level=None,
+                is_search_query=True,  # Default to search in fallback
+                is_follow_up=False,
+                natural_response="I can help you find the right strain.",
+                suggested_follow_ups=[],
+                detected_language=self._detect_language(query),
+                confidence=0.5
+            )
+
+        # Step 2: Handle non-search queries (greetings, help requests, general questions)
+        if not analysis.is_search_query:
+            logger.info(f"❌ Non-search query detected - returning text-only response")
+
+            # Update session with conversation but no strains
+            self._update_session_streamlined(session, query, analysis, [])
+
+            # Save session
+            self.session_manager.save_session_with_backup(session)
+
+            # Build response WITHOUT recommended_strains
+            return self._build_streamlined_response(
+                analysis,
+                [],  # No strains for non-search queries
+                session,
+                filters_applied={"is_search_query": False, "reason": "greeting_or_general_question"}
+            )
+
+        # Step 3: Handle follow-up queries with session context (SIMPLE)
+        if analysis.is_follow_up and session_strains:
+            logger.info(f"🔄 Follow-up query detected - returning session strains")
+
+            # Simply return session strains (LLM already answered in natural_response)
+            result_strains = session_strains
+
+            # Update session
+            self._update_session_streamlined(session, query, analysis, result_strains)
+
+            # Save session
+            self.session_manager.save_session_with_backup(session)
+
+            # Build response
+            return self._build_streamlined_response(
+                analysis,
+                result_strains,
+                session,
+                filters_applied={"is_follow_up": True}
+            )
+
+        # Step 3: Build SQL filters (category + THC/CBD) for NEW search
+        filter_params = {
+            'is_search_query': True  # Log that this is a search query
+        }
+
+        # Category filter
+        if analysis.detected_category:
+            filter_params['category'] = analysis.detected_category
+
+        # THC level → min/max конвертация
+        if analysis.thc_level == "low":
+            filter_params['max_thc'] = 10
+        elif analysis.thc_level == "medium":
+            filter_params['min_thc'] = 10
+            filter_params['max_thc'] = 20
+        elif analysis.thc_level == "high":
+            filter_params['min_thc'] = 20
+
+        # CBD level → min/max конвертация (по стандартам медицинских сортов)
+        if analysis.cbd_level == "low":
+            filter_params['max_cbd'] = 3
+        elif analysis.cbd_level == "medium":
+            filter_params['min_cbd'] = 3
+            filter_params['max_cbd'] = 10
+        elif analysis.cbd_level == "high":
+            filter_params['min_cbd'] = 10
+
+        # Create filter chain
+        filter_chain = self.filter_factory.create_from_params(filter_params)
+        logger.info(f"Filters: {filter_chain.get_filter_names()}")
+
+        # Step 3: Apply SQL filters to get candidates
+        base_query = self.repository.db.query(StrainModel)
+        filtered_query = filter_chain.apply(base_query)
+        candidates = filtered_query.all()
+
+        logger.info(f"SQL filtering (category/THC/CBD): {len(candidates)} candidates")
+
+        # Step 3.5: Apply attribute filters with PostgreSQL fuzzy matching
+        if candidates and (analysis.required_flavors or analysis.required_effects or
+                          analysis.required_helps_with or analysis.exclude_negatives or
+                          analysis.required_terpenes):
+            original_count = len(candidates)
+            candidates = self._apply_attribute_filters(
+                candidates,
+                analysis,
+                filter_params
+            )
+            logger.info(f"After attribute filtering: {len(candidates)} candidates (was {original_count})")
+
+            # If attribute filtering removed ALL candidates, fall back to original set
+            # This ensures we always have results even if exact match not found
+            if not candidates:
+                logger.warning("Attribute filters too strict - falling back to category/THC/CBD results")
+                candidates = filtered_query.all()
+                # Mark that we're showing approximate results
+                filter_params['attribute_fallback'] = True
+
+        # Track if fallback was used
+        fallback_used = False
+
+        # Step 4: Vector search (batch-optimized, primary search method)
+        if candidates:
+            try:
+                result_strains = self.vector_search.search(
+                    query=query,
+                    candidates=candidates,
+                    language=analysis.detected_language,
+                    limit=5  # Return top 5 strains (like old system)
+                )
+                logger.info(f"Vector search: {len(result_strains)} results")
+            except Exception as e:
+                logger.error(f"Vector search failed: {e}", exc_info=True)
+                # Fallback: return first N candidates
+                result_strains = candidates[:5]
+        else:
+            # No candidates after filtering - smart fallback
+            fallback_used = True
+
+            # Если были THC/CBD фильтры, убрать их но сохранить категорию
+            if analysis.thc_level or analysis.cbd_level:
+                logger.warning("No candidates with THC/CBD filters, retrying with category only")
+                fallback_params = {}
+                if analysis.detected_category:
+                    fallback_params['category'] = analysis.detected_category
+
+                fallback_chain = self.filter_factory.create_from_params(fallback_params)
+                fallback_query = fallback_chain.apply(base_query)
+                candidates = fallback_query.all()
+                logger.info(f"Fallback filtering (category only): {len(candidates)} candidates")
+
+            # Если все еще 0 результатов, используем все active сорта
+            if not candidates:
+                logger.warning("No candidates even with category only, using all active strains")
+                candidates = self.repository.db.query(StrainModel).filter(
+                    StrainModel.active == True
+                ).all()
+
+            result_strains = self.vector_search.search(
+                query=query,
+                candidates=candidates,
+                language=analysis.detected_language,
+                limit=5
+            )
+
+        # Step 5: Re-analyze with found strains to improve natural response
+        if result_strains:
+            try:
+                strain_info = [
+                    {
+                        'name': s.name,
+                        'category': s.category,
+                        'thc': str(s.thc) if s.thc else 'N/A'
+                    }
+                    for s in result_strains[:5]
+                ]
+                final_analysis = self.streamlined_analyzer.analyze_query(
+                    user_query=query,
+                    session_context=session_context,
+                    found_strains=strain_info,
+                    fallback_used=fallback_used  # Pass fallback info to LLM
+                )
+                analysis = final_analysis
+            except Exception as e:
+                logger.warning(f"Failed to re-analyze with strains: {e}")
+                # Keep original analysis
+
+        # Step 6: Add fallback notice if exact match not found
+        if fallback_used and result_strains:
+            if analysis.detected_language == 'es':
+                notice = "ℹ️ No encontré coincidencias exactas. Aquí están las opciones más cercanas:\n\n"
+            else:
+                notice = "ℹ️ No exact matches found. Here are the closest options:\n\n"
+            analysis.natural_response = notice + analysis.natural_response
+
+        # Step 7: Update session
+        self._update_session_streamlined(session, query, analysis, result_strains)
+
+        # Step 8: Save session
+        self.session_manager.save_session_with_backup(session)
+
+        # Step 9: Build response
+        return self._build_streamlined_response(analysis, result_strains, session, filter_params)
+
+    def _apply_attribute_filters(
+        self,
+        candidates: List[StrainModel],
+        analysis: QueryAnalysis,
+        filter_params: Dict[str, Any]
+    ) -> List[StrainModel]:
+        """
+        Apply attribute filters with PostgreSQL fuzzy matching (ILIKE)
+
+        Handles: flavors, effects, helps_with, negatives, terpenes
+        Uses ILIKE for case-insensitive partial matching (handles typos like 'tropicas' → 'tropical')
+
+        Args:
+            candidates: Pre-filtered strains from category/THC/CBD filters
+            analysis: Query analysis with extracted attributes
+            filter_params: Dict to store applied filters for logging
+
+        Returns:
+            Filtered list of strains matching attribute criteria
+        """
+        from app.models.database import Flavor, Feeling, HelpsWith, Negative, Terpene
+
+        filtered = candidates
+        candidate_ids = [s.id for s in filtered]
+
+        # Filter by required flavors (fuzzy matching with ILIKE)
+        if analysis.required_flavors:
+            logger.info(f"Filtering by flavors: {analysis.required_flavors}")
+
+            flavor_query = self.repository.db.query(StrainModel).join(
+                StrainModel.flavors
+            ).filter(
+                StrainModel.id.in_(candidate_ids)
+            )
+
+            # Build OR conditions for fuzzy matching (EN + ES)
+            flavor_conditions = []
+            for flavor in analysis.required_flavors:
+                # Используем первые 5 символов для fuzzy matching (handles typos)
+                pattern = f"%{flavor[:5].lower()}%"
+                flavor_conditions.append(
+                    (Flavor.name_en.ilike(pattern)) | (Flavor.name_es.ilike(pattern))
+                )
+
+            # Apply OR logic: any flavor matches
+            if flavor_conditions:
+                from sqlalchemy import or_
+                flavor_query = flavor_query.filter(or_(*flavor_conditions))
+                filtered = flavor_query.distinct().all()
+                candidate_ids = [s.id for s in filtered]
+                filter_params['flavors'] = analysis.required_flavors
+                logger.info(f"After flavor filter: {len(filtered)} strains")
+
+        # Filter by required effects (feelings)
+        if analysis.required_effects and filtered:
+            logger.info(f"Filtering by effects: {analysis.required_effects}")
+
+            effects_query = self.repository.db.query(StrainModel).join(
+                StrainModel.feelings
+            ).filter(
+                StrainModel.id.in_(candidate_ids)
+            )
+
+            effect_conditions = []
+            for effect in analysis.required_effects:
+                pattern = f"%{effect[:5].lower()}%"
+                effect_conditions.append(
+                    (Feeling.name_en.ilike(pattern)) | (Feeling.name_es.ilike(pattern))
+                )
+
+            if effect_conditions:
+                from sqlalchemy import or_
+                effects_query = effects_query.filter(or_(*effect_conditions))
+                filtered = effects_query.distinct().all()
+                candidate_ids = [s.id for s in filtered]
+                filter_params['effects'] = analysis.required_effects
+                logger.info(f"After effects filter: {len(filtered)} strains")
+
+        # Filter by medical uses (helps_with)
+        if analysis.required_helps_with and filtered:
+            logger.info(f"Filtering by helps_with: {analysis.required_helps_with}")
+
+            helps_query = self.repository.db.query(StrainModel).join(
+                StrainModel.helps_with
+            ).filter(
+                StrainModel.id.in_(candidate_ids)
+            )
+
+            helps_conditions = []
+            for condition in analysis.required_helps_with:
+                pattern = f"%{condition[:5].lower()}%"
+                helps_conditions.append(
+                    (HelpsWith.name_en.ilike(pattern)) | (HelpsWith.name_es.ilike(pattern))
+                )
+
+            if helps_conditions:
+                from sqlalchemy import or_
+                helps_query = helps_query.filter(or_(*helps_conditions))
+                filtered = helps_query.distinct().all()
+                candidate_ids = [s.id for s in filtered]
+                filter_params['helps_with'] = analysis.required_helps_with
+                logger.info(f"After helps_with filter: {len(filtered)} strains")
+
+        # Exclude strains with unwanted side effects
+        if analysis.exclude_negatives and filtered:
+            logger.info(f"Excluding negatives: {analysis.exclude_negatives}")
+
+            # Get strain IDs that have any of the excluded negatives
+            negatives_query = self.repository.db.query(StrainModel.id).join(
+                StrainModel.negatives
+            ).filter(
+                StrainModel.id.in_(candidate_ids)
+            )
+
+            negative_conditions = []
+            for negative in analysis.exclude_negatives:
+                pattern = f"%{negative[:5].lower()}%"
+                negative_conditions.append(
+                    (Negative.name_en.ilike(pattern)) | (Negative.name_es.ilike(pattern))
+                )
+
+            if negative_conditions:
+                from sqlalchemy import or_
+                negatives_query = negatives_query.filter(or_(*negative_conditions))
+                exclude_ids = [row[0] for row in negatives_query.distinct().all()]
+
+                # Filter out strains with excluded negatives
+                filtered = [s for s in filtered if s.id not in exclude_ids]
+                candidate_ids = [s.id for s in filtered]
+                filter_params['exclude_negatives'] = analysis.exclude_negatives
+                logger.info(f"After excluding negatives: {len(filtered)} strains")
+
+        # Filter by terpenes (exact scientific names)
+        if analysis.required_terpenes and filtered:
+            logger.info(f"Filtering by terpenes: {analysis.required_terpenes}")
+
+            terpenes_query = self.repository.db.query(StrainModel).join(
+                StrainModel.terpenes
+            ).filter(
+                StrainModel.id.in_(candidate_ids)
+            )
+
+            terpene_conditions = []
+            for terpene in analysis.required_terpenes:
+                pattern = f"%{terpene[:5].lower()}%"
+                terpene_conditions.append(Terpene.name.ilike(pattern))
+
+            if terpene_conditions:
+                from sqlalchemy import or_
+                terpenes_query = terpenes_query.filter(or_(*terpene_conditions))
+                filtered = terpenes_query.distinct().all()
+                filter_params['terpenes'] = analysis.required_terpenes
+                logger.info(f"After terpenes filter: {len(filtered)} strains")
+
+        return filtered
+
+    def _build_session_context(self, session: ConversationSession) -> Dict[str, Any]:
+        """Build minimal session context for streamlined analyzer"""
+
+        context = {
+            'detected_language': session.detected_language or 'es',
+            'conversation_history': []
+        }
+
+        # Add recent conversation history
+        if session.conversation_history:
+            context['conversation_history'] = [
+                {
+                    'query': entry.get('query', ''),
+                    'response': entry.get('response', '')[:100]  # Truncate
+                }
+                for entry in session.conversation_history[-3:]  # Last 3 entries
+            ]
+
+        return context
+
+    def _get_session_strains(self, session: ConversationSession) -> List[Strain]:
+        """Get strains from most recent session recommendation"""
+
+        # Use built-in method from session model
+        strain_ids = session.get_last_strains()
+
+        if not strain_ids:
+            return []
+
+        # Fetch strains from database
+        try:
+            strains = self.repository.db.query(StrainModel).filter(
+                StrainModel.id.in_(strain_ids)
+            ).all()
+
+            # Sort strains to match original order
+            strain_dict = {s.id: s for s in strains}
+            ordered_strains = [strain_dict[sid] for sid in strain_ids if sid in strain_dict]
+
+            logger.info(f"Retrieved {len(ordered_strains)} session strains")
+            return ordered_strains
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve session strains: {e}")
+            return []
+
+    def _update_session_streamlined(
+        self,
+        session: ConversationSession,
+        query: str,
+        analysis: QueryAnalysis,
+        strains: List[Strain]
+    ):
+        """Update session after streamlined processing"""
+
+        # Update language
+        if analysis.detected_language:
+            session.detected_language = analysis.detected_language
+
+        # Add strains to history
+        if strains:
+            strain_ids = [s.id for s in strains]
+            session.add_strain_recommendation(strain_ids)
+            logger.info(f"Added {len(strain_ids)} strains to session history")
+
+        # Add conversation entry
+        session.add_conversation_entry(
+            query=query,
+            response=analysis.natural_response,
+            intent=analysis.detected_category or 'search'
+        )
+
+        # Update activity
+        session.update_activity()
+
+    def _build_streamlined_response(
+        self,
+        analysis: QueryAnalysis,
+        strains: List[Strain],
+        session: ConversationSession,
+        filters_applied: Dict[str, Any]
+    ) -> ChatResponse:
+        """Build response for streamlined processing"""
+
+        # Substitute placeholders with real strain names
+        response_text = self._substitute_strain_placeholders(analysis.natural_response, strains)
+
+        # Build compact strains
+        compact_strains = self._build_compact_strains(strains)
+
+        # Quick actions
+        quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(
+            strains, analysis.detected_language, session
+        )
+
+        return ChatResponse(
+            response=response_text,
+            recommended_strains=compact_strains,
+            detected_intent=analysis.detected_category or 'search',
+            filters_applied=filters_applied,
+            session_id=session.session_id,
+            query_type='streamlined_search',
+            language=analysis.detected_language,
+            confidence=analysis.confidence,
+            quick_actions=quick_actions,
+            is_restored=session.is_restored,
+            is_fallback=False
+        )
+
     def _handle_reset(self, session: ConversationSession, query: str) -> ChatResponse:
         """Обработка команды сброса"""
         
@@ -333,7 +865,7 @@ class SmartRAGService:
                 category=strain.category,
                 slug=strain.slug,
                 url=self._build_strain_url(strain.slug or ""),
-                feelings=[CompactFeeling(name=f.name, energy_type=f.energy_type) for f in strain.feelings] if strain.feelings else [],
+                feelings=[CompactFeeling(name=f.name) for f in strain.feelings] if strain.feelings else [],
                 helps_with=[CompactHelpsWith(name=h.name) for h in strain.helps_with] if strain.helps_with else [],
                 negatives=[CompactNegative(name=n.name) for n in strain.negatives] if strain.negatives else [],
                 flavors=[CompactFlavor(name=fl.name) for fl in strain.flavors] if strain.flavors else []

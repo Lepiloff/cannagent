@@ -7,45 +7,45 @@ import os
 Base = declarative_base()
 
 
-# Association tables for many-to-many relationships
+# Association tables for many-to-many relationships (Django table names)
 strain_feelings_table = Table(
-    'strain_feelings',
+    'strains_strain_feelings',  # Django M2M table
     Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('strain_id', Integer, ForeignKey('strains_strain.id', ondelete='CASCADE')),
-    Column('feeling_id', Integer, ForeignKey('feelings.id', ondelete='CASCADE'))
+    Column('feeling_id', Integer, ForeignKey('strains_feeling.id', ondelete='CASCADE'))
 )
 
 strain_helps_with_table = Table(
-    'strain_helps_with',
+    'strains_strain_helps_with',  # Django M2M table
     Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('strain_id', Integer, ForeignKey('strains_strain.id', ondelete='CASCADE')),
-    Column('helps_with_id', Integer, ForeignKey('helps_with.id', ondelete='CASCADE'))
+    Column('helpswith_id', Integer, ForeignKey('strains_helpswith.id', ondelete='CASCADE'))
 )
 
 strain_negatives_table = Table(
-    'strain_negatives',
+    'strains_strain_negatives',  # Django M2M table
     Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('strain_id', Integer, ForeignKey('strains_strain.id', ondelete='CASCADE')),
-    Column('negative_id', Integer, ForeignKey('negatives.id', ondelete='CASCADE'))
+    Column('negative_id', Integer, ForeignKey('strains_negative.id', ondelete='CASCADE'))
 )
 
 strain_flavors_table = Table(
-    'strain_flavors',
+    'strains_strain_flavors',  # Django M2M table
     Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('strain_id', Integer, ForeignKey('strains_strain.id', ondelete='CASCADE')),
-    Column('flavor_id', Integer, ForeignKey('flavors.id', ondelete='CASCADE'))
+    Column('flavor_id', Integer, ForeignKey('strains_flavor.id', ondelete='CASCADE'))
 )
 
 strain_terpenes_table = Table(
-    'strain_terpenes',
+    'strains_strain_terpenes',  # Django M2M table
     Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('strain_id', Integer, ForeignKey('strains_strain.id', ondelete='CASCADE')),
-    Column('terpene_id', Integer, ForeignKey('terpenes.id', ondelete='CASCADE')),
+    Column('terpene_id', Integer, ForeignKey('strains_terpene.id', ondelete='CASCADE')),
     Column('is_dominant', Boolean, default=False)
 )
 
@@ -64,8 +64,6 @@ class Strain(Base):
     keywords = Column(String(255), nullable=True)
 
     # Multilingual content fields (NEW)
-    name_en = Column(String(255), nullable=True)
-    name_es = Column(String(255), nullable=True)
     title_en = Column(String(255), nullable=True)
     title_es = Column(String(255), nullable=True)
     description_en = Column(Text, nullable=True)
@@ -97,10 +95,7 @@ class Strain(Base):
     # Slug for URL
     slug = Column(String(255), unique=True, nullable=True)
 
-    # Vector embeddings for semantic search
-    # Legacy field (for backward compatibility)
-    embedding = Column(Vector(int(os.getenv('VECTOR_DIMENSION', '1536'))), nullable=True)
-    # Dual embeddings for multilingual support (NEW)
+    # Vector embeddings for semantic search (multilingual support)
     embedding_en = Column(Vector(int(os.getenv('VECTOR_DIMENSION', '1536'))), nullable=True)
     embedding_es = Column(Vector(int(os.getenv('VECTOR_DIMENSION', '1536'))), nullable=True)
     
@@ -137,37 +132,30 @@ class Product(Base):
 # New models for structured strain data
 class Feeling(Base):
     """Strain feelings/effects (e.g., Relaxed, Energetic, Creative)"""
-    __tablename__ = "feelings"
+    __tablename__ = "strains_feeling"  # Django table name
 
     id = Column(Integer, primary_key=True, index=True)
-    # Legacy field (for backward compatibility)
     name = Column(String(50), unique=True, nullable=False)
-    # Multilingual fields (NEW)
+    # Multilingual fields from cannamente
     name_en = Column(String(50), nullable=True)
     name_es = Column(String(50), nullable=True)
-
-    energy_type = Column(String(20), nullable=False)  # energizing, relaxing, neutral
-    created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
     strains = relationship('Strain', secondary=strain_feelings_table, back_populates='feelings')
 
     def __repr__(self):
-        return f"<Feeling(id={self.id}, name='{self.name}', energy_type='{self.energy_type}')>"
+        return f"<Feeling(id={self.id}, name='{self.name}')>"
 
 
 class HelpsWith(Base):
     """Medical conditions/uses that strains help with"""
-    __tablename__ = "helps_with"
+    __tablename__ = "strains_helpswith"  # Django table name
 
     id = Column(Integer, primary_key=True, index=True)
-    # Legacy field (for backward compatibility)
     name = Column(String(100), unique=True, nullable=False)
-    # Multilingual fields (NEW)
+    # Multilingual fields from cannamente
     name_en = Column(String(100), nullable=True)
     name_es = Column(String(100), nullable=True)
-
-    created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
     strains = relationship('Strain', secondary=strain_helps_with_table, back_populates='helps_with')
@@ -178,16 +166,13 @@ class HelpsWith(Base):
 
 class Negative(Base):
     """Negative side effects"""
-    __tablename__ = "negatives"
+    __tablename__ = "strains_negative"  # Django table name
 
     id = Column(Integer, primary_key=True, index=True)
-    # Legacy field (for backward compatibility)
     name = Column(String(50), unique=True, nullable=False)
-    # Multilingual fields (NEW)
+    # Multilingual fields from cannamente
     name_en = Column(String(50), nullable=True)
     name_es = Column(String(50), nullable=True)
-
-    created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
     strains = relationship('Strain', secondary=strain_negatives_table, back_populates='negatives')
@@ -198,16 +183,13 @@ class Negative(Base):
 
 class Flavor(Base):
     """Strain flavors and taste profiles"""
-    __tablename__ = "flavors"
+    __tablename__ = "strains_flavor"  # Django table name
 
     id = Column(Integer, primary_key=True, index=True)
-    # Legacy field (for backward compatibility)
     name = Column(String(50), unique=True, nullable=False)
-    # Multilingual fields (NEW)
+    # Multilingual fields from cannamente
     name_en = Column(String(50), nullable=True)
     name_es = Column(String(50), nullable=True)
-
-    created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
     strains = relationship('Strain', secondary=strain_flavors_table, back_populates='flavors')
@@ -218,17 +200,19 @@ class Flavor(Base):
 
 class Terpene(Base):
     """Terpenes found in strains"""
-    __tablename__ = "terpenes"
+    __tablename__ = "strains_terpene"  # Django table name
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False)  # Single language (scientific name)
-    # Legacy description field
-    description = Column(Text, nullable=True)
-    # Multilingual descriptions (NEW)
+    name = Column(String(50), unique=True, nullable=False)  # Scientific name
+    description = Column(Text, nullable=False)  # Required in cannamente
+    # Multilingual descriptions from cannamente
     description_en = Column(Text, nullable=True)
     description_es = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, server_default=func.now())
+    # Translation fields from cannamente
+    last_translated_at = Column(DateTime, nullable=True)
+    translation_error = Column(Text, nullable=True)
+    translation_source_hash = Column(String(255), nullable=True)
+    translation_status = Column(String(50), nullable=False)  # Required in cannamente
 
     # Relationships
     strains = relationship('Strain', secondary=strain_terpenes_table, back_populates='terpenes')

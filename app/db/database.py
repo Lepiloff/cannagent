@@ -4,8 +4,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.models.database import Base
 
-# Создаем движок для синхронной работы с БД
-engine = create_engine(os.getenv('DATABASE_URL', 'postgresql://user:password@db:5432/ai_budtender'))
+# Создаем движок для синхронной работы с БД (cannamente database)
+engine = create_engine(os.getenv('DATABASE_URL'))
 
 # Создаем сессию
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -30,17 +30,18 @@ class StrainRepository:
         """Получение списка штаммов"""
         return self.db.query(StrainModel).filter(StrainModel.active == True).offset(skip).limit(limit).all()
     
-    def search_similar_strains(self, query_embedding: List[float], limit: int = 5) -> List[StrainModel]:
+    def search_similar_strains(self, query_embedding: List[float], limit: int = 5, language: str = 'en') -> List[StrainModel]:
         """Legacy vector similarity search (use search_strains_with_intent for better results)"""
+        embedding_field = StrainModel.embedding_en if language == 'en' else StrainModel.embedding_es
         return (
             self.db.query(StrainModel)
             .options(joinedload(StrainModel.feelings))
             .options(joinedload(StrainModel.helps_with))
             .options(joinedload(StrainModel.negatives))
             .options(joinedload(StrainModel.flavors))
-            .filter(StrainModel.embedding.isnot(None))
+            .filter(embedding_field.isnot(None))
             .filter(StrainModel.active == True)
-            .order_by(StrainModel.embedding.cosine_distance(query_embedding))
+            .order_by(embedding_field.cosine_distance(query_embedding))
             .limit(limit)
             .all()
         )
@@ -133,10 +134,12 @@ class StrainRepository:
         
         # Apply vector similarity if embedding provided
         if query_embedding:
+            # Use English embeddings by default for semantic search
+            embedding_field = StrainModel.embedding_en
             base_query = (
                 base_query
-                .filter(StrainModel.embedding.isnot(None))
-                .order_by(StrainModel.embedding.cosine_distance(query_embedding))
+                .filter(embedding_field.isnot(None))
+                .order_by(embedding_field.cosine_distance(query_embedding))
             )
             with_embedding = base_query.count()
             print(f"🔍 DB DEBUG: After embedding filter: {with_embedding}")
@@ -216,11 +219,14 @@ class StrainRepository:
         
         return base_query.limit(filter_request.limit).all()
     
-    def update_strain_embedding(self, strain_id: int, embedding: List[float]) -> Optional[StrainModel]:
-        """Обновление эмбеддинга штамма"""
+    def update_strain_embedding(self, strain_id: int, embedding: List[float], language: str = 'en') -> Optional[StrainModel]:
+        """Обновление эмбеддинга штамма для указанного языка"""
         strain = self.get_strain(strain_id)
         if strain:
-            strain.embedding = embedding
+            if language == 'en':
+                strain.embedding_en = embedding
+            else:
+                strain.embedding_es = embedding
             self.db.commit()
             self.db.refresh(strain)
         return strain
