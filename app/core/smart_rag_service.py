@@ -3,15 +3,11 @@ from typing import List, Optional, Dict, Any
 from app.models.session import ConversationSession
 from app.models.schemas import ChatResponse, CompactStrain, CompactFeeling, CompactHelpsWith, CompactNegative, CompactFlavor, Strain
 from app.models.database import Strain as StrainModel  # For direct DB queries
-from app.core.smart_query_analyzer import SmartQueryAnalyzer, SmartAnalysis
-from app.core.context_provider import ContextProvider
-from app.core.universal_action_executor import UniversalActionExecutor
 from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
 from app.core.llm_interface import get_llm
-from app.core.dialog_policy import extract_request_signals, decide_action_hint, detect_language, evaluate_domain_relevance
 
-# Streamlined Architecture Components (v4.0)
+# Streamlined RAG v4.0 Components
 from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysis
 from app.core.category_filter import FilterFactory, FilterChain
 from app.core.vector_search_service import VectorSearchService
@@ -23,40 +19,27 @@ logger = logging.getLogger(__name__)
 
 class SmartRAGService:
     """
-    Smart RAG Service v3.0 - Интеллектуальный сервис с AI-driven обработкой запросов
-    
-    Основные принципы:
-    - AI определяет план действий для каждого запроса
-    - Минимум хардкода, максимум AI рассуждений
-    - Автоматическое исключение invalid данных
-    - Полный контекст для принятия решений
+    Streamlined RAG Service v4.0 - AI-powered Cannabis Strain Recommendation System
+
+    Architecture:
+    - LLM-based query analysis with intent detection
+    - SQL pre-filtering (category, THC, CBD) with PostgreSQL fuzzy matching
+    - Universal attribute filtering (flavors, effects, medical uses, terpenes)
+    - Vector semantic search for ranking
+    - Context-aware session management
     """
-    
+
     def __init__(self, repository: StrainRepository):
         self.repository = repository
         self.session_manager = get_session_manager()
 
-        # Инициализация компонентов v3.0
+        # Initialize Streamlined RAG v4.0 components
         self.llm_interface = get_llm()
-        self.smart_analyzer = SmartQueryAnalyzer(self.llm_interface)
-        self.context_provider = ContextProvider(repository)
-        self.action_executor = UniversalActionExecutor(repository)
+        self.streamlined_analyzer = StreamlinedQueryAnalyzer(self.llm_interface)
+        self.vector_search = VectorSearchService(self.llm_interface, repository.db)
+        self.filter_factory = FilterFactory()
 
-        # Streamlined Architecture v4.0 (Feature Flag)
-        self.use_streamlined_rag = os.getenv('USE_STREAMLINED_RAG', 'false').lower() == 'true'
-        if self.use_streamlined_rag:
-            logger.info("🚀 Streamlined RAG v4.0 ENABLED - Using simplified category filter + vector search")
-            self.streamlined_analyzer = StreamlinedQueryAnalyzer(self.llm_interface)
-            self.vector_search = VectorSearchService(self.llm_interface, repository.db)
-            self.filter_factory = FilterFactory()
-        else:
-            logger.info("Using Smart Query Executor v3.0")
-
-        # Проверка включения Smart Query Executor
-        self.use_smart_executor = os.getenv('USE_SMART_EXECUTOR', 'true').lower() == 'true'
-
-        if not self.use_smart_executor:
-            logger.warning("Smart Query Executor disabled, falling back to legacy mode")
+        logger.info("🚀 Streamlined RAG v4.0 initialized")
     
     def process_contextual_query(
         self,
@@ -66,134 +49,22 @@ class SmartRAGService:
         source_platform: Optional[str] = None
     ) -> ChatResponse:
         """
-        Главный метод обработки запросов с Smart Query Executor v3.0
+        Main query processing method - Streamlined RAG v4.0
+
+        Processes user queries through:
+        1. LLM query analysis (intent, category, attributes)
+        2. SQL pre-filtering with fuzzy matching
+        3. Vector semantic search
+        4. Context-aware response generation
         """
 
-        logger.info(f"Processing query with Smart RAG v3.0: {query[:50]}...")
+        logger.info(f"Processing query: {query[:50]}...")
 
-        # 1. Управление сессией
+        # Get or create session
         session = self.session_manager.get_or_restore_session(session_id)
 
-        # 2. Route to Streamlined RAG v4.0 if enabled
-        if self.use_streamlined_rag:
-            return self._streamlined_process_query(query, session)
-
-        # 3. Проверка использования Smart Executor
-        if not self.use_smart_executor:
-            # Fallback к legacy обработке
-            return self._legacy_process_query(query, session)
-        
-        # 3. Получение полного контекста
-        full_context = self.context_provider.get_full_context(query, session)
-        session_strains = self.context_provider.get_session_strains(session)
-        
-        # 4. Обработка специальных команд (reset)
-        if self._is_reset_command(query):
-            return self._handle_reset(session, query)
-        
-        # 5. Подсказки политики диалога (категория/эффекты/вкусы/сортировка)
-        policy_signals = extract_request_signals(query)
-        policy_hint = decide_action_hint(session, session_strains, policy_signals)
-        # Усиливаем OOD-детекцию по raw-запросу (не только по сигналам)
-        domain_info = evaluate_domain_relevance(query)
-        policy_hint["domain_score"] = domain_info.get("domain_score", policy_hint.get("domain_score", 1.0))
-        policy_hint["is_out_of_domain"] = domain_info.get("is_out_of_domain", policy_hint.get("is_out_of_domain", False))
-
-        # 5.1 Вне домена: короткий ответ без поиска
-        if policy_hint.get('is_out_of_domain'):
-            language = policy_hint.get('language') or 'en'
-            responses = {
-                'es': "Puedo ayudar con la selección de cepas y sus efectos. ¿Te gustaría continuar con cannabis?",
-                'en': "I can help with cannabis strains and effects. Would you like to continue with strain selection?",
-                'ru': "Я помогаю с подбором сортов каннабиса и эффектов. Продолжим про сорта?",
-            }
-            quick_actions = self._get_new_search_suggestions(language)
-            return ChatResponse(
-                response=responses.get(language, responses['en']),
-                recommended_strains=[],
-                detected_intent='out_of_domain',
-                filters_applied={},
-                session_id=session.session_id,
-                query_type='clarification',
-                language=language,
-                confidence=1.0,
-                quick_actions=quick_actions,
-                is_restored=session.is_restored,
-                is_fallback=False
-            )
-
-        # 6. Smart анализ запроса с полным контекстом + policy
-        try:
-            smart_analysis = self.smart_analyzer.analyze_query(
-                query, session, session_strains, full_context, policy_hint
-            )
-            logger.info(f"Smart analysis: {smart_analysis.action_plan.primary_action}, confidence: {smart_analysis.confidence}")
-        except Exception as e:
-            logger.error(f"Smart analysis failed: {e}")
-            # Fallback к legacy обработке
-            return self._legacy_process_query(query, session)
-        
-        # 7. Если политика требует расширить поиск (новая категория/эффекты, контекст плохо совпадает)
-        if policy_hint.get("force_expand_search") and smart_analysis.action_plan.primary_action not in ["search_strains", "expand_search"]:
-            logger.info("Dialog policy forces expand_search due to mismatch with session context")
-            smart_analysis.action_plan.primary_action = "expand_search"
-
-        # Вливаем предложенные фильтры/сортировку в параметры (без перезаписи уже заданных AI)
-        if policy_hint.get("suggested_filters"):
-            params_filters = smart_analysis.action_plan.parameters.setdefault("filters", {})
-            for k, v in policy_hint["suggested_filters"].items():
-                params_filters.setdefault(k, v)
-        if policy_hint.get("suggested_sort") and "sort" not in smart_analysis.action_plan.parameters:
-            smart_analysis.action_plan.parameters["sort"] = policy_hint["suggested_sort"]
-
-        # Если пришли фильтры от политики (например, medical),
-        # а действие не делает явного отбора (explain/select), переключимся на filter_strains
-        has_filters = bool(smart_analysis.action_plan.parameters.get("filters"))
-        if has_filters and smart_analysis.action_plan.primary_action in ["explain_strains", "select_strains"]:
-            logger.info("Switching action to filter_strains due to presence of policy filters")
-            smart_analysis.action_plan.primary_action = "filter_strains"
-
-        # Язык: если AI не указал, используем детекцию политики
-        if not smart_analysis.detected_language:
-            smart_analysis.detected_language = policy_hint.get("language") or 'en'
-
-        # 8. Обработка случаев недостаточного контекста
-        if smart_analysis.action_plan.primary_action in ['sort_strains', 'filter_strains', 'select_strains'] and not session_strains:
-            # Если пытаемся сортировать/фильтровать/выбирать, но нет сортов в сессии - делаем поиск
-            logger.info(f"Converting {smart_analysis.action_plan.primary_action} to search_strains due to empty session")
-            smart_analysis.action_plan.primary_action = 'search_strains'
-        elif smart_analysis.action_plan.primary_action in ['expand_search'] and not session_strains:
-            # Для expand_search без контекста - просто выполняем поиск
-            pass
-        # Дополнительно: если есть явная смена категории (в policy_hint) и она не совпадает с контекстом — расширим поиск
-        elif smart_analysis.action_plan.primary_action in ['sort_strains', 'filter_strains']:
-            policy_filters = smart_analysis.action_plan.parameters.get('filters', {})
-            requested_category = None
-            if isinstance(policy_filters, dict) and 'category' in policy_filters:
-                cat_cfg = policy_filters['category']
-                if isinstance(cat_cfg, dict):
-                    requested_category = cat_cfg.get('value')
-            if requested_category and session_strains:
-                session_cats = {s.category for s in session_strains if getattr(s, 'category', None)}
-                if requested_category not in session_cats:
-                    logger.info("Detected category change not present in session context; switching to expand_search")
-                    smart_analysis.action_plan.primary_action = 'expand_search'
-        
-        # 9. Выполнение действия по AI плану
-        result_strains = self.action_executor.execute_action(
-            smart_analysis.action_plan,
-            session_strains
-        )
-        
-        # 10. Обновление сессии
-        self._update_session(session, query, smart_analysis, result_strains)
-        
-        # 11. Сохранение сессии
-        self.session_manager.save_session_with_backup(session)
-        
-        # 12. Построение ответа
-        return self._build_smart_response(smart_analysis, result_strains, session)
-
+        # Process with Streamlined RAG v4.0
+        return self._streamlined_process_query(query, session)
     def _streamlined_process_query(
         self,
         query: str,
@@ -740,114 +611,6 @@ class SmartRAGService:
             is_fallback=False
         )
     
-    def _handle_no_context(self, analysis: SmartAnalysis, session: ConversationSession) -> ChatResponse:
-        """Обработка запросов без контекста"""
-        
-        logger.info("Handling no context situation")
-        
-        responses = {
-            'es': "No tengo variedades anteriores para comparar. ¿Qué efectos buscas?",
-            'en': "I don't have previous strains to compare. What effects are you looking for?"
-        }
-        
-        quick_actions = self._get_new_search_suggestions(analysis.detected_language)
-        
-        return ChatResponse(
-            response=responses.get(analysis.detected_language, responses['es']),
-            recommended_strains=[],
-            detected_intent='no_context',
-            filters_applied={},
-            session_id=session.session_id,
-            query_type='clarification',
-            language=analysis.detected_language,
-            confidence=1.0,
-            quick_actions=quick_actions,
-            is_restored=session.is_restored,
-            is_fallback=analysis.is_fallback
-        )
-    
-    def _build_smart_response(
-        self,
-        analysis: SmartAnalysis,
-        strains: List[Strain],
-        session: ConversationSession
-    ) -> ChatResponse:
-        """Построение ответа на основе Smart анализа"""
-        
-        # Используем готовый natural response от AI с подстановкой реальных названий
-        response_text = self._substitute_strain_placeholders(analysis.natural_response, strains)
-        
-        # Компактные сорта для UI
-        compact_strains = self._build_compact_strains(strains)
-        
-        # Динамические quick actions (либо от AI, либо сгенерированные)
-        quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(
-            strains, analysis.detected_language, session
-        )
-        
-        # Добавление индикаторов AI reasoning (опционально для отладки)
-        if os.getenv('ENABLE_AI_REASONING_DEBUG', 'false').lower() == 'true':
-            response_text += f"\n\n🤖 Reasoning: {analysis.action_plan.reasoning}"
-        
-        return ChatResponse(
-            response=response_text,
-            recommended_strains=compact_strains,
-            detected_intent=analysis.action_plan.primary_action,
-            filters_applied=analysis.action_plan.parameters,
-            session_id=session.session_id,
-            query_type=analysis.action_plan.primary_action,
-            language=analysis.detected_language,
-            confidence=analysis.confidence,
-            quick_actions=quick_actions,
-            is_restored=session.is_restored,
-            is_fallback=analysis.is_fallback,
-            warnings=[] if analysis.confidence > 0.7 else ["Low confidence analysis"]
-        )
-    
-    def _update_session(
-        self,
-        session: ConversationSession,
-        query: str,
-        analysis: SmartAnalysis,
-        strains: List[Strain]
-    ):
-        """Обновление сессии после smart обработки"""
-        
-        # Обновление языка
-        if analysis.detected_language:
-            session.detected_language = analysis.detected_language
-        
-        # Добавление сортов в историю
-        if strains:
-            strain_ids = [s.id for s in strains]
-            session.add_strain_recommendation(strain_ids)
-            logger.info(f"Added {len(strain_ids)} strains to session history")
-        
-        # Обновление темы разговора (попытка определить по действию)
-        if analysis.action_plan.primary_action == 'expand_search':
-            # Новый поиск - возможно смена темы
-            if 'sleep' in query.lower() or 'dormir' in query.lower():
-                session.update_topic("sleep")
-            elif 'energy' in query.lower() or 'energía' in query.lower():
-                session.update_topic("energy")
-        
-        # Обновление предпочтений (если есть в параметрах действия)
-        if 'criteria' in analysis.action_plan.parameters:
-            criteria = analysis.action_plan.parameters['criteria']
-            if isinstance(criteria, dict) and 'effects' in criteria:
-                if 'desired' in criteria['effects']:
-                    session.update_preferences('preferred_effects', criteria['effects']['desired'])
-        
-        # Добавление записи в историю разговора
-        session.add_conversation_entry(
-            query=query,
-            response=analysis.natural_response,
-            intent=session.current_topic
-        )
-        
-        # Обновление времени активности
-        session.update_activity()
-    
     def _build_compact_strains(self, strains: List[Strain]) -> List[CompactStrain]:
         """Создание компактных объектов сортов для UI"""
         
@@ -989,35 +752,3 @@ class SmartRAGService:
         spanish_count = sum(1 for word in spanish_indicators if word in text_lower)
         return 'es' if spanish_count > 0 else 'en'
     
-    def _legacy_process_query(
-        self,
-        query: str,
-        session: ConversationSession
-    ) -> ChatResponse:
-        """Fallback к legacy обработке (оптимизированный RAG v2.0)"""
-        
-        logger.info("Using legacy processing mode")
-        
-        # Импорт legacy сервиса
-        import importlib
-        module = importlib.import_module('app.core.optimized_rag_service')
-        OptimizedContextualRAGService = getattr(module, 'OptimizedContextualRAGService')
-        # Создание legacy сервиса и обработка
-        legacy_service = OptimizedContextualRAGService(self.repository)
-        return legacy_service.process_contextual_query(query, session.session_id)
-    
-    def get_service_info(self) -> Dict[str, Any]:
-        """Информация о сервисе для мониторинга"""
-        
-        return {
-            "service_name": "SmartRAGService",
-            "version": "3.0",
-            "smart_executor_enabled": self.use_smart_executor,
-            "components": [
-                "SmartQueryAnalyzer",
-                "ContextProvider", 
-                "ActionExecutor",
-                "SessionManager"
-            ],
-            "fallback_available": True
-        }
