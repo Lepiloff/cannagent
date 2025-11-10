@@ -27,6 +27,9 @@ class QueryAnalysis(BaseModel):
     # Query intent detection (CRITICAL for avoiding unnecessary searches)
     is_search_query: bool = Field(default=True, description="Whether user is requesting strain search/recommendation")
 
+    # Specific strain query detection (return only 1 strain, not 5 similar)
+    specific_strain_name: Optional[str] = Field(None, description="Exact strain name if user asks about specific strain")
+
     # Follow-up query detection (SIMPLE)
     is_follow_up: bool = Field(default=False, description="Whether this is a follow-up query referencing previous results")
 
@@ -177,6 +180,25 @@ Analyze the user's query and provide:
 
    **IMPORTANT**: Default to TRUE if unclear. Only set FALSE for clear non-search queries.
 
+0.5. **Specific Strain Query Detection** (CRITICAL - determines if user asks about exact strain):
+
+   **specific_strain_name = "Strain Name"** if user asks about a SPECIFIC strain:
+   - "do you have info about Tropicana Cookies" → "Tropicana Cookies"
+   - "tell me about Northern Lights" → "Northern Lights"
+   - "what is Blue Dream" → "Blue Dream"
+   - "información sobre ACDC" → "ACDC"
+   - "tienes la cepa Harlequin" → "Harlequin"
+
+   **specific_strain_name = null** if user wants RECOMMENDATIONS/SEARCH:
+   - "suggest me indica strains" → null (searching, not specific)
+   - "show me high THC strains" → null (searching)
+   - "what's good for sleep" → null (recommendations)
+
+   **IMPORTANT**:
+   - Extract EXACT strain name as written by user (capitalization OK)
+   - Only set if user clearly references ONE specific strain
+   - If specific strain detected, return ONLY that strain (limit=1), not similar ones
+
 1. **Category Detection** (for SQL pre-filtering):
    - If user mentions "indica", "sativa", or "hybrid" explicitly → return that category
    - If user describes effects that strongly suggest a category → return that category
@@ -292,6 +314,7 @@ CRITICAL GUIDELINES:
 RESPONSE FORMAT (JSON only):
 {{
   "is_search_query": true|false,
+  "specific_strain_name": "Strain Name|null",
   "detected_category": "Indica|Sativa|Hybrid|null",
   "thc_level": "low|medium|high|null",
   "cbd_level": "low|medium|high|null",
@@ -314,6 +337,7 @@ EXAMPLES:
 Query: "hey, how can you help me"
 {{
   "is_search_query": false,
+  "specific_strain_name": null,
   "detected_category": null,
   "thc_level": null,
   "cbd_level": null,
@@ -453,6 +477,46 @@ Query: "suggest me indica with tropical flavor and high thc"
   "confidence": 0.95
 }}
 
+--- SPECIFIC STRAIN QUERIES (return only 1 strain, not 5 similar) ---
+
+Query: "do you have info about Tropicana Cookies?"
+{{
+  "is_search_query": true,
+  "specific_strain_name": "Tropicana Cookies",
+  "detected_category": null,
+  "thc_level": null,
+  "cbd_level": null,
+  "is_follow_up": false,
+  "required_flavors": null,
+  "required_effects": null,
+  "required_helps_with": null,
+  "exclude_negatives": null,
+  "required_terpenes": null,
+  "natural_response": "Tropicana Cookies is a sativa strain with 16% THC. It's known for energizing and creative effects with a tropical, citrus flavor profile - perfect for daytime use.",
+  "suggested_follow_ups": ["Would you like similar sativa strains?", "Any other strain you'd like to know about?", "Looking for something for a specific purpose?"],
+  "detected_language": "en",
+  "confidence": 0.95
+}}
+
+Query: "cuéntame sobre ACDC"
+{{
+  "is_search_query": true,
+  "specific_strain_name": "ACDC",
+  "detected_category": null,
+  "thc_level": null,
+  "cbd_level": null,
+  "is_follow_up": false,
+  "required_flavors": null,
+  "required_effects": null,
+  "required_helps_with": null,
+  "exclude_negatives": null,
+  "required_terpenes": null,
+  "natural_response": "ACDC es una cepa híbrida con muy bajo THC (1%) y alto CBD (14%). Es ideal para beneficios medicinales sin efectos psicoactivos fuertes, excelente para dolor y estrés.",
+  "suggested_follow_ups": ["¿Quieres otras cepas con alto CBD?", "¿Buscas algo para alguna condición específica?", "¿Te interesan cepas similares?"],
+  "detected_language": "es",
+  "confidence": 0.95
+}}
+
 --- FOLLOW-UP QUERY EXAMPLES (CRITICAL) ---
 
 Context: Previous strains shown: Animal Cookies (19% THC), Animal Mints (16% THC), GMO Cookies (28% THC)
@@ -578,6 +642,13 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
             if isinstance(is_search_query, str):
                 is_search_query = is_search_query.lower() in ["true", "yes", "1"]
 
+            # Нормализация specific strain name
+            specific_strain_name = raw_result.get("specific_strain_name")
+            if isinstance(specific_strain_name, str):
+                specific_strain_name = specific_strain_name.strip()
+                if specific_strain_name.lower() in ["null", "", "none"]:
+                    specific_strain_name = None
+
             # Нормализация follow-up (simple)
             is_follow_up = raw_result.get("is_follow_up", False)
             if isinstance(is_follow_up, str):
@@ -609,6 +680,7 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
                 thc_level=thc_level,
                 cbd_level=cbd_level,
                 is_search_query=is_search_query,
+                specific_strain_name=specific_strain_name,
                 is_follow_up=is_follow_up,
                 required_flavors=required_flavors,
                 required_effects=required_effects,

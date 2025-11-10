@@ -167,6 +167,46 @@ class SmartRAGService:
                 filters_applied={"is_follow_up": True}
             )
 
+        # Step 2.5: Handle SPECIFIC STRAIN queries (return only 1 strain, not 5 similar)
+        if analysis.specific_strain_name:
+            logger.info(f"🎯 Specific strain query detected: '{analysis.specific_strain_name}'")
+
+            # Search for strain by exact name (case-insensitive)
+            specific_strain = self.repository.db.query(StrainModel).filter(
+                StrainModel.name.ilike(analysis.specific_strain_name),
+                StrainModel.active == True
+            ).first()
+
+            if specific_strain:
+                result_strains = [specific_strain]
+                logger.info(f"✅ Found specific strain: {specific_strain.name}")
+            else:
+                # Strain not found - use vector search with limit=1 to find closest match
+                logger.warning(f"❌ Specific strain '{analysis.specific_strain_name}' not found - searching closest match")
+                all_strains = self.repository.db.query(StrainModel).filter(
+                    StrainModel.active == True
+                ).all()
+                result_strains = self.vector_search.search(
+                    query=analysis.specific_strain_name,
+                    candidates=all_strains,
+                    language=analysis.detected_language,
+                    limit=1  # Only 1 strain for specific queries
+                )
+
+            # Update session
+            self._update_session_streamlined(session, query, analysis, result_strains)
+
+            # Save session
+            self.session_manager.save_session_with_backup(session)
+
+            # Build response
+            return self._build_streamlined_response(
+                analysis,
+                result_strains,
+                session,
+                filters_applied={"specific_strain_query": True, "strain_name": analysis.specific_strain_name}
+            )
+
         # Step 3: Build SQL filters (category + THC/CBD) for NEW search
         filter_params = {
             'is_search_query': True  # Log that this is a search query
@@ -192,7 +232,7 @@ class SmartRAGService:
             filter_params['min_cbd'] = 3
             filter_params['max_cbd'] = 10
         elif analysis.cbd_level == "high":
-            filter_params['min_cbd'] = 10
+            filter_params['min_cbd'] = 7  # Lowered from 10 to include strains like Harlequin (9% CBD)
 
         # Create filter chain
         filter_chain = self.filter_factory.create_from_params(filter_params)
