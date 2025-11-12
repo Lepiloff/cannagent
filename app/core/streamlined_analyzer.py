@@ -9,11 +9,14 @@ Streamlined Query Analyzer - Упрощённая версия для векто
 Векторный поиск - ОСНОВНОЙ метод поиска. SQL только для категории.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from app.core.llm_interface import LLMInterface
 import json
 import logging
+
+if TYPE_CHECKING:
+    from app.core.context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +60,24 @@ class StreamlinedQueryAnalyzer:
     - Качественный natural response
     """
 
-    def __init__(self, llm_interface: LLMInterface):
+    def __init__(
+        self,
+        llm_interface: LLMInterface,
+        context_builder: Optional["ContextBuilder"] = None
+    ):
+        """
+        Args:
+            llm_interface: LLM interface for query analysis
+            context_builder: Context builder with DB taxonomy (optional for graceful degradation)
+        """
         self.llm = llm_interface
+        self.context_builder = context_builder
+
+        if not context_builder:
+            logger.warning(
+                "StreamlinedQueryAnalyzer initialized without ContextBuilder - "
+                "using hardcoded taxonomy data (not recommended)"
+            )
 
     def analyze_query(
         self,
@@ -148,11 +167,35 @@ class StreamlinedQueryAnalyzer:
         return context
 
     def _analyze_with_llm(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Анализ через LLM с МИНИМАЛЬНЫМ промптом"""
+        """Анализ через LLM с динамическим DB контекстом"""
+
+        # Build DB context if ContextBuilder available
+        db_context_section = ""
+        if self.context_builder:
+            try:
+                # Get DB taxonomy data
+                llm_context = self.context_builder.build_llm_context(
+                    user_query=context["user_query"],
+                    language=context.get("previous_language", "es"),
+                    session_context=None,  # Already in context
+                    found_strains=None,
+                    fallback_used=bool(context.get("fallback_note"))
+                )
+                # Build formatted DB context section
+                db_context_section = self.context_builder.build_prompt_section(llm_context)
+                logger.debug("Using dynamic DB taxonomy context from ContextBuilder")
+            except Exception as e:
+                logger.warning(f"Failed to build DB context: {e}. Using fallback.")
+                db_context_section = self._build_fallback_db_context()
+        else:
+            logger.debug("ContextBuilder not available - using hardcoded taxonomy")
+            db_context_section = self._build_fallback_db_context()
 
         prompt = """You are an expert cannabis budtender AI assistant.
 
-CONTEXT:
+{db_context}
+
+USER CONTEXT:
 User query: "{user_query}"
 Previous language: {previous_language}
 Conversation summary: {conversation_summary}
@@ -226,37 +269,41 @@ Analyze the user's query and provide:
 
 4. **Exact Attribute Extraction** (for SQL pre-filtering with fuzzy matching):
    Extract ONLY if explicitly mentioned by user. Write EXACTLY as user wrote (typos OK).
+   PostgreSQL fuzzy matching will handle mapping to DB values.
+
+   **IMPORTANT**: Refer to DATABASE CONTEXT above for available values!
 
    **Flavors** (required_flavors):
    - Extract if user mentions taste/flavor/aroma keywords
    - Examples: "tropical" → ["tropical"], "citrus mango" → ["citrus", "mango"]
-   - Typos OK: "tropicas" → ["tropicas"], "citricos" → ["citricos"]
-   - Common flavors: tropical, citrus, earthy, pine, sweet, berry, diesel, cheese, vanilla, etc.
+   - Typos OK: "tropicas" → ["tropicas"], "mint" → ["mint"] (fuzzy match will find "menthol")
+   - See "Available Flavors" in DATABASE CONTEXT for reference
 
    **Effects** (required_effects):
    - Extract if user mentions specific feelings/effects
    - Examples: "relaxed sleepy" → ["relaxed", "sleepy"], "energetic creative" → ["energetic", "creative"]
-   - Common effects: relaxed, sleepy, happy, euphoric, energetic, focused, creative, uplifted, hungry, talkative
+   - See "Available Feelings" in DATABASE CONTEXT for reference
 
    **Medical Uses** (required_helps_with):
    - Extract if user mentions medical conditions/symptoms
    - Examples: "for pain and anxiety" → ["pain", "anxiety"], "para dormir" → ["insomnia"]
-   - Common uses: pain, anxiety, stress, insomnia, depression, inflammation, nausea, headaches
+   - See "Available Medical Uses" in DATABASE CONTEXT for reference
 
    **Exclude Negatives** (exclude_negatives):
    - Extract if user wants to AVOID side effects
    - Examples: "without paranoia" → ["paranoia"], "que no cause ansiedad" → ["anxiety"]
-   - Common negatives: dry mouth, dry eyes, paranoia, anxiety, dizzy, headache
+   - See "Available Negatives" in DATABASE CONTEXT for reference
 
    **Terpenes** (required_terpenes):
    - Extract ONLY if user explicitly mentions terpene names
    - Examples: "with myrcene" → ["myrcene"], "limonene pinene" → ["limonene", "pinene"]
-   - Common terpenes: myrcene, limonene, pinene, caryophyllene, linalool, humulene
+   - See "Available Terpenes" in DATABASE CONTEXT for reference
 
    **IMPORTANT**:
    - Return empty array [] if not mentioned
    - Write EXACTLY as user wrote - fuzzy matching happens in SQL
    - Both EN/ES accepted: "relajado" and "relaxed" both OK
+   - DB context contains ALL available values - use it as reference!
 
 5. **Follow-up Query Detection** (CRITICAL LOGIC - analyze carefully):
 
@@ -572,7 +619,9 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
 }}
 """
 
-        formatted_prompt = prompt.format(**context)
+        # Merge DB context with user context for formatting
+        format_context = {**context, "db_context": db_context_section}
+        formatted_prompt = prompt.format(**format_context)
 
         # Получение JSON ответа от LLM
         try:
@@ -741,3 +790,26 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
             detected_language="es",
             confidence=0.5
         )
+
+    def _build_fallback_db_context(self) -> str:
+        """
+        Build minimal hardcoded DB context when ContextBuilder is not available
+
+        Returns:
+            Formatted DB context section (minimal)
+        """
+        return """DATABASE CONTEXT (limited - ContextBuilder not available):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Available Flavors: tropical, citrus, earthy, pine, sweet, berry, diesel, cheese, vanilla, menthol, peppermint, lemon, lime
+Available Feelings: relaxed, sleepy, happy, euphoric, energetic, focused, creative, uplifted, hungry, talkative
+Available Medical Uses: pain, anxiety, stress, insomnia, depression, inflammation, nausea, headaches
+Available Negatives: dry mouth, dry eyes, paranoia, anxiety, dizzy, headache
+Available Terpenes: Myrcene, Limonene, Pinene, Caryophyllene, Linalool, Humulene
+
+THC Range in DB: 0.5-28.0%
+CBD Range in DB: 0.1-15.0%
+Categories: Indica, Sativa, Hybrid
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOTE: Using hardcoded taxonomy. For complete DB data, integrate ContextBuilder.
+"""

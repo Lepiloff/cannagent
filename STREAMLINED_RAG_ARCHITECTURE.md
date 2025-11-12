@@ -62,13 +62,14 @@
 │  STEP 3: Attribute Filtering (Fuzzy Matching)                   │
 │  SmartRAGService._apply_attribute_filters()                     │
 │                                                                  │
-│  PostgreSQL ILIKE with first 5 chars:                           │
-│  - Flavors: WHERE name_en ILIKE '%tropi%' OR name_es ILIKE ...  │
-│  - Effects: WHERE name_en ILIKE '%relax%' ...                   │
-│  - Helps_with: WHERE name_en ILIKE '%pain%' ...                 │
+│  PostgreSQL pg_trgm trigram similarity:                         │
+│  - Uses FuzzyMatcher with threshold 0.3                         │
+│  - Flavors: similarity(user_input, name_en) > 0.3              │
+│  - Effects: similarity matching on feelings table               │
+│  - Medical uses: similarity matching on helps_with table        │
 │  - Exclude negatives: NOT IN (...)                              │
 │                                                                  │
-│  Handles typos: "tropicas" → finds "tropical" ✓                 │
+│  Handles typos: "mint" → "menthol" (score: 0.42) ✓              │
 │  Result: 2 candidates                                           │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -147,6 +148,7 @@ class QueryAnalysis(BaseModel):
 
 **LLM Prompt Strategy:**
 - Minimal prompt (~300 lines vs 500+ in old system)
+- **Dynamic DB context**: Uses ContextBuilder to inject ALL available taxonomy from DB
 - Clear examples for each field
 - Bilingual keyword support
 - Fuzzy matching instructions: extract "as written" (typos OK)
@@ -178,29 +180,30 @@ Main processing pipeline:
 8. **Build Response** - Return `ChatResponse`
 
 #### `_apply_attribute_filters(candidates, analysis, filter_params)`
-**Purpose:** Filter strains by exact attributes using PostgreSQL fuzzy matching
+**Purpose:** Filter strains by exact attributes using PostgreSQL pg_trgm trigram similarity
 
 **Algorithm:**
 ```python
 # For each attribute type (flavors, effects, helps_with, negatives, terpenes):
-1. Build ILIKE conditions using first 5 characters
-   pattern = f"%{attribute[:5].lower()}%"
+1. Use FuzzyMatcher to resolve user inputs to DB values
+   matches = fuzzy_matcher.match(user_input, db_candidates, threshold=0.3)
 
-2. Check both English and Spanish fields
-   (name_en ILIKE pattern) OR (name_es ILIKE pattern)
+2. FuzzyMatcher uses pg_trgm trigram similarity:
+   SELECT value, similarity(:user_input, value) as score
+   WHERE similarity(:user_input, value) > 0.3
+   ORDER BY score DESC
 
 3. Join with strain table and filter candidate IDs
-   query.join(Strain.flavors).filter(id IN candidates).filter(conditions)
+   query.join(Strain.flavors).filter(id IN candidates).filter(matched_values)
 
 4. Return filtered list (graceful fallback if 0 results)
 ```
 
 **Example:**
 ```python
-# User input: "tropicas" (typo)
-# Pattern: "%tropi%"
-# SQL: WHERE (name_en ILIKE '%tropi%' OR name_es ILIKE '%tropi%')
-# Matches: "tropical" ✓
+# User input: "mint"
+# Trigram similarity scores: "menthol" (0.42), "mint" (1.0)
+# Matches: ["menthol", "mint"] (both above 0.3 threshold) ✓
 ```
 
 **Supported Attributes:**
@@ -290,7 +293,76 @@ Perform semantic search on pre-filtered candidates.
 
 ---
 
-### 5. Session Management
+### 5. DB-Aware Architecture (Phase 1)
+
+**Purpose:** Intelligent taxonomy caching and fuzzy matching with dynamic LLM context
+
+#### TaxonomyCache
+**File:** `app/core/taxonomy_cache.py`
+
+**Features:**
+- Dual caching: Redis (primary) + in-memory (fallback)
+- 1-hour TTL (3600s) for taxonomy data
+- Graceful degradation on Redis failure
+- Language-specific caching (EN/ES separate keys)
+- Warm cache on startup
+
+**Usage:**
+```python
+cache = TaxonomyCache(repository, redis_client)
+taxonomy = cache.get_taxonomy("es")  # Returns all flavors, effects, medical uses, etc.
+```
+
+#### FuzzyMatcher
+**File:** `app/core/fuzzy_matcher.py`
+
+**Strategy Pattern:**
+- `TrigramMatcher` - pg_trgm similarity (threshold 0.3)
+- `ExactMatcher` - Direct match fallback
+- `CompositeMatcher` - Combines both strategies
+
+**Example:**
+```python
+matcher = create_composite_matcher(db_session)
+matches = matcher.match("mint", ["menthol", "mint", "lemon"], threshold=0.3)
+# Returns: [MatchResult("mint", 1.0), MatchResult("menthol", 0.42)]
+```
+
+#### ContextBuilder
+**File:** `app/core/context_builder.py`
+
+**Purpose:** Build dynamic LLM context from DB taxonomy (replaces hardcoded lists)
+
+**Features:**
+- Loads ALL characteristics from DB (not truncated)
+- Formats for LLM prompt section
+- Language-aware context building
+- Statistics for monitoring
+
+**Integration:**
+```python
+context_builder = create_context_builder(taxonomy_cache)
+llm_context = context_builder.build_llm_context(query, language="es")
+prompt_section = context_builder.build_prompt_section(llm_context)
+# LLM receives: "Available flavors: tropical, citrus, ... (all DB values)"
+```
+
+#### TaxonomyRepository
+**File:** `app/db/taxonomy_repository.py`
+
+**Purpose:** Data access layer for taxonomy (SOLID principles)
+
+**Methods:**
+- `get_all_flavors()` - Returns bilingual flavor list
+- `get_all_feelings()` - Returns bilingual effects
+- `get_all_helps_with()` - Returns bilingual medical uses
+- `get_all_negatives()` - Returns bilingual side effects
+- `get_all_terpenes()` - Returns terpene list
+- `get_thc_range()`, `get_cbd_range()`, `get_categories()`
+
+---
+
+### 6. Session Management
 **File:** `app/core/session_manager.py`
 
 **Purpose:** Redis-backed session storage for conversation context

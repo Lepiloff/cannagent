@@ -1,4 +1,4 @@
-.PHONY: help build start stop restart logs test clean migration init-db
+.PHONY: help build start stop restart logs test tests clean migration init-db
 
 # Default target
 help:
@@ -49,7 +49,10 @@ logs:
 
 # Run tests
 test:
-	docker-compose exec api pytest -v
+	docker compose exec api pytest tests/ -v
+
+# Alias for tests
+tests: test
 
 # Clean up containers and volumes
 clean:

@@ -12,6 +12,9 @@ from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysi
 from app.core.category_filter import FilterFactory, FilterChain
 from app.core.vector_search_service import VectorSearchService
 
+# DB-Aware Architecture - Taxonomy System
+from app.core.taxonomy_init import get_taxonomy_system
+
 import os
 
 logger = logging.getLogger(__name__)
@@ -35,7 +38,23 @@ class SmartRAGService:
 
         # Initialize Streamlined RAG v4.0 components
         self.llm_interface = get_llm()
-        self.streamlined_analyzer = StreamlinedQueryAnalyzer(self.llm_interface)
+
+        # Get ContextBuilder and FuzzyMatcher from taxonomy system (DB-Aware Architecture)
+        context_builder = None
+        fuzzy_matcher = None
+        taxonomy_system = get_taxonomy_system()
+        if taxonomy_system:
+            context_builder = taxonomy_system.context_builder
+            fuzzy_matcher = taxonomy_system.fuzzy_matcher
+            logger.info("✅ Using ContextBuilder and FuzzyMatcher with DB taxonomy")
+        else:
+            logger.warning("⚠️ Taxonomy system not initialized - using hardcoded taxonomy and ILIKE fallback")
+
+        self.streamlined_analyzer = StreamlinedQueryAnalyzer(
+            self.llm_interface,
+            context_builder=context_builder
+        )
+        self.fuzzy_matcher = fuzzy_matcher
         self.vector_search = VectorSearchService(self.llm_interface, repository.db)
         self.filter_factory = FilterFactory()
 
@@ -351,6 +370,70 @@ class SmartRAGService:
         # Step 9: Build response
         return self._build_streamlined_response(analysis, result_strains, session, filter_params)
 
+    def _resolve_to_db_values(
+        self,
+        user_inputs: List[str],
+        taxonomy_field: str,
+        language: str = "es"
+    ) -> List[str]:
+        """
+        Resolve user inputs to actual DB values using fuzzy matching
+
+        Args:
+            user_inputs: User's input values (may have typos or variations)
+            taxonomy_field: Field name (flavors, feelings, helps_with, negatives, terpenes)
+            language: Language for matching ("en" or "es")
+
+        Returns:
+            List of matched DB values
+
+        Example:
+            ["mint", "tropicas"] → ["menthol", "tropical"] (using trigram similarity)
+        """
+        if not user_inputs:
+            return []
+
+        if not self.fuzzy_matcher:
+            # Fallback: return inputs as-is (ILIKE will be used)
+            logger.debug(f"FuzzyMatcher not available - using inputs as-is for {taxonomy_field}")
+            return user_inputs
+
+        # Get taxonomy cache to get all possible DB values
+        taxonomy_system = get_taxonomy_system()
+        if not taxonomy_system:
+            return user_inputs
+
+        taxonomy = taxonomy_system.cache.get_taxonomy(language)
+        db_candidates = taxonomy.get(taxonomy_field, [])
+
+        if not db_candidates:
+            logger.warning(f"No DB candidates for {taxonomy_field}")
+            return user_inputs
+
+        # Use fuzzy matcher to resolve each user input
+        resolved = []
+        for user_input in user_inputs:
+            matches = self.fuzzy_matcher.match(
+                user_input=user_input,
+                candidates=db_candidates,
+                threshold=0.3
+            )
+
+            if matches:
+                # Take top match
+                best_match = matches[0]
+                resolved.append(best_match.matched_value)
+                logger.debug(
+                    f"Fuzzy match: '{user_input}' → '{best_match.matched_value}' "
+                    f"(score: {best_match.score:.2f}, strategy: {best_match.strategy})"
+                )
+            else:
+                # No match found - keep original (will try ILIKE fallback)
+                resolved.append(user_input)
+                logger.debug(f"No fuzzy match for '{user_input}' - using original")
+
+        return resolved
+
     def _apply_attribute_filters(
         self,
         candidates: List[StrainModel],
@@ -358,10 +441,13 @@ class SmartRAGService:
         filter_params: Dict[str, Any]
     ) -> List[StrainModel]:
         """
-        Apply attribute filters with PostgreSQL fuzzy matching (ILIKE)
+        Apply attribute filters with PostgreSQL trigram fuzzy matching
 
         Handles: flavors, effects, helps_with, negatives, terpenes
-        Uses ILIKE for case-insensitive partial matching (handles typos like 'tropicas' → 'tropical')
+        Uses FuzzyMatcher (trigram similarity) for better matching:
+        - "mint" → "menthol" (similarity: 0.42)
+        - "lemon" → "limonene" (similarity: 0.53)
+        Falls back to ILIKE if fuzzy matcher not available
 
         Args:
             candidates: Pre-filtered strains from category/THC/CBD filters
@@ -376,134 +462,186 @@ class SmartRAGService:
         filtered = candidates
         candidate_ids = [s.id for s in filtered]
 
-        # Filter by required flavors (fuzzy matching with ILIKE)
+        # Detect language from analysis
+        language = analysis.detected_language
+
+        # Filter by required flavors (trigram fuzzy matching)
         if analysis.required_flavors:
-            logger.info(f"Filtering by flavors: {analysis.required_flavors}")
+            logger.info(f"Filtering by flavors (user input): {analysis.required_flavors}")
 
-            flavor_query = self.repository.db.query(StrainModel).join(
-                StrainModel.flavors
-            ).filter(
-                StrainModel.id.in_(candidate_ids)
+            # Resolve user inputs to DB values using fuzzy matching
+            resolved_flavors = self._resolve_to_db_values(
+                user_inputs=analysis.required_flavors,
+                taxonomy_field="flavors",
+                language=language
             )
+            logger.info(f"Resolved flavors (DB values): {resolved_flavors}")
 
-            # Build OR conditions for fuzzy matching (EN + ES)
-            flavor_conditions = []
-            for flavor in analysis.required_flavors:
-                # Используем первые 5 символов для fuzzy matching (handles typos)
-                pattern = f"%{flavor[:5].lower()}%"
-                flavor_conditions.append(
-                    (Flavor.name_en.ilike(pattern)) | (Flavor.name_es.ilike(pattern))
+            if resolved_flavors:
+                flavor_query = self.repository.db.query(StrainModel).join(
+                    StrainModel.flavors
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
                 )
 
-            # Apply OR logic: any flavor matches
-            if flavor_conditions:
-                from sqlalchemy import or_
-                flavor_query = flavor_query.filter(or_(*flavor_conditions))
-                filtered = flavor_query.distinct().all()
-                candidate_ids = [s.id for s in filtered]
-                filter_params['flavors'] = analysis.required_flavors
-                logger.info(f"After flavor filter: {len(filtered)} strains")
+                # Build OR conditions for exact/ILIKE matching after fuzzy resolution
+                flavor_conditions = []
+                for flavor in resolved_flavors:
+                    # Try exact match first, then ILIKE fallback
+                    flavor_conditions.append(
+                        (Flavor.name_en.ilike(f"%{flavor.lower()}%")) |
+                        (Flavor.name_es.ilike(f"%{flavor.lower()}%")) |
+                        (Flavor.name.ilike(f"%{flavor.lower()}%"))
+                    )
 
-        # Filter by required effects (feelings)
+                # Apply OR logic: any flavor matches
+                if flavor_conditions:
+                    from sqlalchemy import or_
+                    flavor_query = flavor_query.filter(or_(*flavor_conditions))
+                    filtered = flavor_query.distinct().all()
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['flavors'] = resolved_flavors
+                    logger.info(f"After flavor filter: {len(filtered)} strains")
+
+        # Filter by required effects (feelings) - trigram fuzzy matching
         if analysis.required_effects and filtered:
-            logger.info(f"Filtering by effects: {analysis.required_effects}")
+            logger.info(f"Filtering by effects (user input): {analysis.required_effects}")
 
-            effects_query = self.repository.db.query(StrainModel).join(
-                StrainModel.feelings
-            ).filter(
-                StrainModel.id.in_(candidate_ids)
+            # Resolve user inputs to DB values using fuzzy matching
+            resolved_effects = self._resolve_to_db_values(
+                user_inputs=analysis.required_effects,
+                taxonomy_field="feelings",
+                language=language
             )
+            logger.info(f"Resolved effects (DB values): {resolved_effects}")
 
-            effect_conditions = []
-            for effect in analysis.required_effects:
-                pattern = f"%{effect[:5].lower()}%"
-                effect_conditions.append(
-                    (Feeling.name_en.ilike(pattern)) | (Feeling.name_es.ilike(pattern))
+            if resolved_effects:
+                effects_query = self.repository.db.query(StrainModel).join(
+                    StrainModel.feelings
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
                 )
 
-            if effect_conditions:
-                from sqlalchemy import or_
-                effects_query = effects_query.filter(or_(*effect_conditions))
-                filtered = effects_query.distinct().all()
-                candidate_ids = [s.id for s in filtered]
-                filter_params['effects'] = analysis.required_effects
-                logger.info(f"After effects filter: {len(filtered)} strains")
+                effect_conditions = []
+                for effect in resolved_effects:
+                    effect_conditions.append(
+                        (Feeling.name_en.ilike(f"%{effect.lower()}%")) |
+                        (Feeling.name_es.ilike(f"%{effect.lower()}%")) |
+                        (Feeling.name.ilike(f"%{effect.lower()}%"))
+                    )
 
-        # Filter by medical uses (helps_with)
+                if effect_conditions:
+                    from sqlalchemy import or_
+                    effects_query = effects_query.filter(or_(*effect_conditions))
+                    filtered = effects_query.distinct().all()
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['effects'] = resolved_effects
+                    logger.info(f"After effects filter: {len(filtered)} strains")
+
+        # Filter by medical uses (helps_with) - trigram fuzzy matching
         if analysis.required_helps_with and filtered:
-            logger.info(f"Filtering by helps_with: {analysis.required_helps_with}")
+            logger.info(f"Filtering by helps_with (user input): {analysis.required_helps_with}")
 
-            helps_query = self.repository.db.query(StrainModel).join(
-                StrainModel.helps_with
-            ).filter(
-                StrainModel.id.in_(candidate_ids)
+            # Resolve user inputs to DB values using fuzzy matching
+            resolved_helps = self._resolve_to_db_values(
+                user_inputs=analysis.required_helps_with,
+                taxonomy_field="helps_with",
+                language=language
             )
+            logger.info(f"Resolved helps_with (DB values): {resolved_helps}")
 
-            helps_conditions = []
-            for condition in analysis.required_helps_with:
-                pattern = f"%{condition[:5].lower()}%"
-                helps_conditions.append(
-                    (HelpsWith.name_en.ilike(pattern)) | (HelpsWith.name_es.ilike(pattern))
+            if resolved_helps:
+                helps_query = self.repository.db.query(StrainModel).join(
+                    StrainModel.helps_with
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
                 )
 
-            if helps_conditions:
-                from sqlalchemy import or_
-                helps_query = helps_query.filter(or_(*helps_conditions))
-                filtered = helps_query.distinct().all()
-                candidate_ids = [s.id for s in filtered]
-                filter_params['helps_with'] = analysis.required_helps_with
-                logger.info(f"After helps_with filter: {len(filtered)} strains")
+                helps_conditions = []
+                for condition in resolved_helps:
+                    helps_conditions.append(
+                        (HelpsWith.name_en.ilike(f"%{condition.lower()}%")) |
+                        (HelpsWith.name_es.ilike(f"%{condition.lower()}%")) |
+                        (HelpsWith.name.ilike(f"%{condition.lower()}%"))
+                    )
 
-        # Exclude strains with unwanted side effects
+                if helps_conditions:
+                    from sqlalchemy import or_
+                    helps_query = helps_query.filter(or_(*helps_conditions))
+                    filtered = helps_query.distinct().all()
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['helps_with'] = resolved_helps
+                    logger.info(f"After helps_with filter: {len(filtered)} strains")
+
+        # Exclude strains with unwanted side effects - trigram fuzzy matching
         if analysis.exclude_negatives and filtered:
-            logger.info(f"Excluding negatives: {analysis.exclude_negatives}")
+            logger.info(f"Excluding negatives (user input): {analysis.exclude_negatives}")
 
-            # Get strain IDs that have any of the excluded negatives
-            negatives_query = self.repository.db.query(StrainModel.id).join(
-                StrainModel.negatives
-            ).filter(
-                StrainModel.id.in_(candidate_ids)
+            # Resolve user inputs to DB values using fuzzy matching
+            resolved_negatives = self._resolve_to_db_values(
+                user_inputs=analysis.exclude_negatives,
+                taxonomy_field="negatives",
+                language=language
             )
+            logger.info(f"Resolved negatives (DB values): {resolved_negatives}")
 
-            negative_conditions = []
-            for negative in analysis.exclude_negatives:
-                pattern = f"%{negative[:5].lower()}%"
-                negative_conditions.append(
-                    (Negative.name_en.ilike(pattern)) | (Negative.name_es.ilike(pattern))
+            if resolved_negatives:
+                # Get strain IDs that have any of the excluded negatives
+                negatives_query = self.repository.db.query(StrainModel.id).join(
+                    StrainModel.negatives
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
                 )
 
-            if negative_conditions:
-                from sqlalchemy import or_
-                negatives_query = negatives_query.filter(or_(*negative_conditions))
-                exclude_ids = [row[0] for row in negatives_query.distinct().all()]
+                negative_conditions = []
+                for negative in resolved_negatives:
+                    negative_conditions.append(
+                        (Negative.name_en.ilike(f"%{negative.lower()}%")) |
+                        (Negative.name_es.ilike(f"%{negative.lower()}%")) |
+                        (Negative.name.ilike(f"%{negative.lower()}%"))
+                    )
 
-                # Filter out strains with excluded negatives
-                filtered = [s for s in filtered if s.id not in exclude_ids]
-                candidate_ids = [s.id for s in filtered]
-                filter_params['exclude_negatives'] = analysis.exclude_negatives
-                logger.info(f"After excluding negatives: {len(filtered)} strains")
+                if negative_conditions:
+                    from sqlalchemy import or_
+                    negatives_query = negatives_query.filter(or_(*negative_conditions))
+                    exclude_ids = [row[0] for row in negatives_query.distinct().all()]
 
-        # Filter by terpenes (exact scientific names)
+                    # Filter out strains with excluded negatives
+                    filtered = [s for s in filtered if s.id not in exclude_ids]
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['exclude_negatives'] = resolved_negatives
+                    logger.info(f"After excluding negatives: {len(filtered)} strains")
+
+        # Filter by terpenes (scientific names) - trigram fuzzy matching
         if analysis.required_terpenes and filtered:
-            logger.info(f"Filtering by terpenes: {analysis.required_terpenes}")
+            logger.info(f"Filtering by terpenes (user input): {analysis.required_terpenes}")
 
-            terpenes_query = self.repository.db.query(StrainModel).join(
-                StrainModel.terpenes
-            ).filter(
-                StrainModel.id.in_(candidate_ids)
+            # Resolve user inputs to DB values using fuzzy matching
+            resolved_terpenes = self._resolve_to_db_values(
+                user_inputs=analysis.required_terpenes,
+                taxonomy_field="terpenes",
+                language=language
             )
+            logger.info(f"Resolved terpenes (DB values): {resolved_terpenes}")
 
-            terpene_conditions = []
-            for terpene in analysis.required_terpenes:
-                pattern = f"%{terpene[:5].lower()}%"
-                terpene_conditions.append(Terpene.name.ilike(pattern))
+            if resolved_terpenes:
+                terpenes_query = self.repository.db.query(StrainModel).join(
+                    StrainModel.terpenes
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
+                )
 
-            if terpene_conditions:
-                from sqlalchemy import or_
-                terpenes_query = terpenes_query.filter(or_(*terpene_conditions))
-                filtered = terpenes_query.distinct().all()
-                filter_params['terpenes'] = analysis.required_terpenes
-                logger.info(f"After terpenes filter: {len(filtered)} strains")
+                terpene_conditions = []
+                for terpene in resolved_terpenes:
+                    terpene_conditions.append(Terpene.name.ilike(f"%{terpene.lower()}%"))
+
+                if terpene_conditions:
+                    from sqlalchemy import or_
+                    terpenes_query = terpenes_query.filter(or_(*terpene_conditions))
+                    filtered = terpenes_query.distinct().all()
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['terpenes'] = resolved_terpenes
+                    logger.info(f"After terpenes filter: {len(filtered)} strains")
 
         return filtered
 

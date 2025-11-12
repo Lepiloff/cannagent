@@ -71,8 +71,8 @@ make sync-strains     # Syncs feelings, effects, medical uses + embeddings
 
 ### ✅ STAGE 3: Streamlined RAG v4.0 (Current Architecture)
 - **LLM Query Analysis**: Intent detection, category extraction, attribute filtering (flavors, effects, medical uses)
-- **SQL Pre-filtering**: Category, THC/CBD thresholds applied first with PostgreSQL fuzzy matching (ILIKE for first 5 chars)
-- **Attribute Filtering**: Universal filtering on flavors, effects, helps_with, negatives, terpenes with fuzzy matching
+- **SQL Pre-filtering**: Category, THC/CBD thresholds applied first with PostgreSQL pg_trgm trigram similarity (fuzzy matching)
+- **Attribute Filtering**: Universal filtering on flavors, effects, helps_with, negatives, terpenes with trigram similarity
 - **Vector Search**: Top candidates re-ranked by cosine similarity with query embedding
 - **Language-Aware**: Uses `embedding_es` for Spanish queries, `embedding_en` for English
 - **Specific Strain Queries**: Returns only 1 strain when user asks about specific strain by name
@@ -245,7 +245,7 @@ docker compose exec api python scripts/sync_daily.py        # Incremental sync
 │ - Feelings      │    │ 🌿 Terpenes Support             │    │ - Multi-step UI │
 │ - Medical uses  │    │ 🔍 Streamlined Search Flow      │    │ - Quick Actions │
 │ - Effects       │    │ 🧠 LLM Query Analysis           │    │ - Terpene Info  │
-│ - Terpenes      │    │ 🎯 PostgreSQL Fuzzy Matching    │    │ - Specific Info │
+│ - Terpenes      │    │ 🎯 pg_trgm Trigram Similarity   │    │ - Specific Info │
 │ - PostgreSQL    │    │ ⚡ Vector Semantic Search       │    │                 │
 └─────────────────┘    └──────────────────────────────────┘    └─────────────────┘
 ```
@@ -536,10 +536,15 @@ canagent/
 │   │   ├── session_manager.py        # Redis-backed session management
 │   │   ├── llm_interface.py          # OpenAI/Mock interface
 │   │   ├── cache.py                  # Redis caching layer
-│   │   └── metrics.py                # Prometheus metrics
+│   │   ├── metrics.py                # Prometheus metrics
+│   │   ├── taxonomy_cache.py         # DB-Aware: Redis + in-memory taxonomy cache
+│   │   ├── fuzzy_matcher.py          # DB-Aware: pg_trgm trigram similarity
+│   │   ├── context_builder.py        # DB-Aware: Dynamic LLM context from DB
+│   │   └── taxonomy_init.py          # DB-Aware: System initialization
 │   ├── db/                # Database layer
 │   │   ├── database.py   # Connection + multilingual models
-│   │   └── repository.py # Repository with attribute filtering + terpenes
+│   │   ├── repository.py # Repository with attribute filtering + terpenes
+│   │   └── taxonomy_repository.py    # DB-Aware: Taxonomy data access
 │   ├── models/            # Data models
 │   │   ├── database.py   # SQLAlchemy models (Strain + Terpenes)
 │   │   ├── schemas.py    # Pydantic schemas (CompactStrain + CompactTerpene)
@@ -567,7 +572,7 @@ canagent/
 
 - ✅ **Streamlined Query Processing Flow**
   - LLM query analysis with intent detection (search vs non-search queries)
-  - SQL pre-filtering with PostgreSQL fuzzy matching (ILIKE for first 5 chars)
+  - SQL pre-filtering with PostgreSQL pg_trgm trigram similarity (fuzzy matching)
   - Universal attribute filtering (flavors, effects, helps_with, negatives, terpenes)
   - Vector semantic search for final ranking
 
@@ -588,10 +593,24 @@ canagent/
 
 **Technical Improvements:**
 - ✅ Non-search query detection (greetings, help requests, thanks)
-- ✅ PostgreSQL fuzzy matching for typo tolerance
+- ✅ PostgreSQL pg_trgm extension for trigram similarity matching (typo tolerance)
 - ✅ Session-based context preservation
 - ✅ Follow-up query detection
 - ✅ Bilingual support (EN/ES) with language auto-detection
+
+### 🔧 v7.1 - DB-Aware Architecture Phase 1 (January 2025)
+**🎯 Intelligent taxonomy caching and fuzzy matching**
+
+- ✅ **TaxonomyCache** - Redis + in-memory dual caching (1-hour TTL, graceful degradation)
+- ✅ **FuzzyMatcher** - pg_trgm trigram similarity with threshold 0.3 ("mint" → "menthol")
+- ✅ **ContextBuilder** - Dynamic LLM context from DB (replaces hardcoded taxonomy)
+- ✅ **TaxonomyRepository** - Data access layer for characteristics (SOLID principles)
+
+**Benefits:**
+- No more hardcoded taxonomy in prompts (DRY principle)
+- Automatic updates when DB changes (cache invalidation)
+- Better fuzzy matching: trigram similarity vs simple ILIKE
+- LLM receives ALL available characteristics from DB
 
 ### v6.0 - Multilingual Hybrid RAG with Terpenes (January 2025)
 **🎯 Complete multilingual support with hybrid search and terpenes**

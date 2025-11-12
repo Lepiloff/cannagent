@@ -1,28 +1,59 @@
 import os
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from app.db.database import create_tables
+from app.db.database import create_tables, SessionLocal
 from app.api import chat, health, strains
 from app.utils.data_import import initialize_sample_data
 from app.core.logging import setup_logging
 from app.core.metrics import MetricsMiddleware, get_metrics
 from app.core.rate_limiter import rate_limit_handler
+from app.core.cache import get_redis
+from app.core.taxonomy_init import initialize_taxonomy_system
 
 # Setup logging
 setup_logging()
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan event handler"""
     # Startup
+    logger.info("🚀 Starting AI Budtender application...")
+
     create_tables()
     # initialize_sample_data()  # Disabled - using real data from cannamente
+
+    # Initialize DB-Aware Taxonomy System
+    try:
+        db_session = SessionLocal()
+        redis_client = get_redis()
+
+        taxonomy_system = initialize_taxonomy_system(
+            db_session=db_session,
+            redis_client=redis_client,
+            warm_cache=True
+        )
+
+        if taxonomy_system:
+            logger.info("✅ Taxonomy system initialized successfully")
+        else:
+            logger.warning("⚠️ Taxonomy system not initialized (disabled)")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize taxonomy system: {e}")
+        logger.warning("Application will continue without taxonomy cache")
+
+    logger.info("✅ Application startup complete")
+
     yield
+
     # Shutdown (if needed)
+    logger.info("👋 Shutting down application...")
 
 # Create FastAPI application
 app = FastAPI(
