@@ -110,11 +110,12 @@ class TrigramMatcher:
 
         try:
             # PostgreSQL query using unnest for bulk similarity
+            # Note: Using CAST() instead of :: to avoid conflict with SQLAlchemy parameter syntax
             query = text("""
                 SELECT
                     value,
                     similarity(:user_input, value) as score
-                FROM unnest(:candidates::text[]) as value
+                FROM unnest(CAST(:candidates AS text[])) as value
                 WHERE similarity(:user_input, value) > :threshold
                 ORDER BY score DESC
             """)

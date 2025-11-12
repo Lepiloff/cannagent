@@ -358,6 +358,21 @@ CRITICAL GUIDELINES:
 - Keep it simple and helpful
 - **FOLLOW-UP DETECTION IS CRITICAL**: If user references previous results, set is_follow_up=true
 
+⚠️ **ABSOLUTELY CRITICAL FOR FOLLOW-UP QUERIES**:
+When is_follow_up=true, you MUST follow these rules for "natural_response":
+
+1. **If query is about comparing/selecting from current list** (e.g., "which has lowest THC", "which is strongest", "show me the indica from that list"):
+   - ONLY use strains from "Recommended strains" list above
+   - DO NOT mention ANY strains outside this list
+   - Example: "Recommended strains" = [A (16% THC), B (19% THC)] + Query "which has lowest THC" → Answer: "A has the lowest THC at 16%"
+
+2. **If current list has NO suitable options for the request** (e.g., user asks for Indica but list only has Sativa):
+   - Set is_follow_up=false to trigger new search
+   - Explain that current list doesn't match and suggest new search
+   - Example: "Recommended strains" = [Sativa1, Sativa2] + Query "show me indica" → is_follow_up=false, suggest new Indica search
+
+3. **NEVER mention strains from general database knowledge when is_follow_up=true and suitable options exist in "Recommended strains"**
+
 RESPONSE FORMAT (JSON only):
 {{
   "is_search_query": true|false,
