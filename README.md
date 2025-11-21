@@ -498,6 +498,29 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 - [ ] Set up monitoring alerts
 - [ ] Review and customize CORS settings
 
+### AWS EC2 Deployment (stack-fastapi)
+- `docker-compose.prod.yaml` defines the production stack-fastapi project: FastAPI API + Redis only, both attached to the shared external network `app_net` so they can talk to the Django stack (`stack-django`) and the shared Postgres stack (`stack-db`).
+- Run once on the EC2 host to prepare networking:
+  ```bash
+  docker network create app_net || true
+  ```
+- Manual rollout (expects a populated `.env` on the server):
+  ```bash
+  cd /home/ubuntu/canagent
+  COMPOSE_PROJECT_NAME=stack-fastapi docker-compose -f docker-compose.prod.yaml pull
+  COMPOSE_PROJECT_NAME=stack-fastapi docker-compose -f docker-compose.prod.yaml up -d --build
+  ```
+- Health + metrics ports are exposed via `${API_PORT:-8001}` and `${METRICS_EXTERNAL_PORT:-9091}`; database connectivity comes from the shared `app_net` network (use `POSTGRES_HOST=db` once the DB stack is connected to `app_net`).
+
+### GitHub Actions Deploy (master → EC2)
+- Workflow: `.github/workflows/deploy-to-ec2.yaml`.
+- Triggers on each push to `master`, rebuilds the container image (uses `--no-cache` only when `Dockerfile`, `requirements.txt`, or `docker-compose.prod.yaml` change), ensures the `app_net` network exists, then runs `docker-compose -f docker-compose.prod.yaml up -d` with `COMPOSE_PROJECT_NAME=stack-fastapi`.
+- Required repository secrets:
+  - `EC2_SSH_KEY`: private key with SSH access to the EC2 host (user `ubuntu`).
+  - `EC2_IP_ADDRESS`: public IP/DNS of the EC2 instance.
+  - `CANAGENT_REMOTE_PATH` *(optional)*: override for the project path on the server (`/home/ubuntu/canagent` is used when unset).
+- Customize the `.env` on the server for production-only values (real OpenAI keys, `POSTGRES_HOST=db`, `MOCK_MODE=false`, etc.). The action assumes the repo is already cloned into `CANAGENT_REMOTE_PATH`.
+
 ## 🔄 Data Synchronization
 
 ### Production-Ready Scripts
@@ -558,7 +581,8 @@ canagent/
 │   └── common.py                 # Shared sync functions
 ├── migrations/            # Database migrations
 │   └── 001_init_multilingual_database.sql  # Unified multilingual migration
-├── docker-compose.yml     # Docker configuration
+├── docker-compose.yml     # Local development stack
+├── docker-compose.prod.yaml  # Production stack-fastapi (EC2)
 ├── env.example           # Environment variables template
 ├── Dockerfile            # Container definition
 ├── Makefile              # Command automation

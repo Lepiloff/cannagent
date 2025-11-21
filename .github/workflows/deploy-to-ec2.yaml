@@ -1,0 +1,101 @@
+name: Deploy FastAPI to EC2
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  REMOTE_PROJECT_DIR: ${{ secrets.CANAGENT_REMOTE_PATH }}
+  STACK_NAME: stack-fastapi
+  COMPOSE_FILE: docker-compose.prod.yaml
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect build-impacting changes
+        id: detect_changes
+        run: |
+          set -euo pipefail
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          else
+            CHANGED_FILES=$(git ls-tree -r --name-only HEAD)
+          fi
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          if echo "$CHANGED_FILES" | grep -Eq '^(Dockerfile|requirements\.txt|docker-compose\.prod\.yaml)$'; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Deploy stack-fastapi
+        env:
+          EC2_HOST: ${{ secrets.EC2_IP_ADDRESS }}
+          REBUILD_FLAG: ${{ steps.detect_changes.outputs.rebuild }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EC2_HOST:-}" ]; then
+            echo "Missing EC2_IP_ADDRESS secret"
+            exit 1
+          fi
+
+          REMOTE_PATH_VALUE="${REMOTE_PROJECT_DIR:-/home/ubuntu/canagent}"
+          STACK_VALUE="${STACK_NAME:-stack-fastapi}"
+          COMPOSE_FILE_VALUE="${COMPOSE_FILE:-docker-compose.prod.yaml}"
+          REBUILD_VALUE="${REBUILD_FLAG:-false}"
+
+          ssh -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=60 \
+            "ubuntu@${EC2_HOST}" \
+            "REMOTE_PROJECT_DIR='${REMOTE_PATH_VALUE}' STACK_NAME='${STACK_VALUE}' COMPOSE_FILE='${COMPOSE_FILE_VALUE}' REBUILD_IMAGES='${REBUILD_VALUE}' bash -s" <<'EOF'
+              set -euo pipefail
+              REMOTE_PATH="${REMOTE_PROJECT_DIR:-/home/ubuntu/canagent}"
+              STACK="${STACK_NAME:-stack-fastapi}"
+              COMPOSE_FILE_PATH="${COMPOSE_FILE:-docker-compose.prod.yaml}"
+
+              echo "Using remote path: $REMOTE_PATH"
+              cd "$REMOTE_PATH"
+
+              echo "Ensuring git state is clean..."
+              git fetch origin master
+              git reset --hard origin/master
+
+              echo "Ensuring shared network exists..."
+              docker network inspect app_net >/dev/null 2>&1 || docker network create app_net
+
+              export COMPOSE_PROJECT_NAME="$STACK"
+
+              echo "Stopping existing stack..."
+              docker-compose -f "$COMPOSE_FILE_PATH" down
+
+              if [ "${REBUILD_IMAGES}" = "true" ]; then
+                echo "Rebuilding images from scratch..."
+                docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
+              else
+                echo "Refreshing images with cache..."
+                docker-compose -f "$COMPOSE_FILE_PATH" build --pull
+              fi
+
+              echo "Starting updated stack..."
+              docker-compose -f "$COMPOSE_FILE_PATH" up -d
+
+              echo "Current container status:"
+              docker-compose -f "$COMPOSE_FILE_PATH" ps
+          EOF
+
