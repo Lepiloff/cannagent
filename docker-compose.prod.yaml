@@ -1,0 +1,53 @@
+services:
+  api:
+    build:
+      context: .
+    image: canagent-api:latest
+    container_name: canagent-api
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers ${UVICORN_WORKERS:-4}
+      --proxy-headers
+    env_file:
+      - .env
+    environment:
+      # Override database connection to use canna-postgres
+      POSTGRES_HOST: canna-postgres
+      REDIS_HOST: canagent-redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/ping/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - cancon_canna-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: canagent-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cancon_canna-network
+
+volumes:
+  redis_data:
+
+networks:
+  cancon_canna-network:
+    external: true
+    name: cancon_canna-network
+
