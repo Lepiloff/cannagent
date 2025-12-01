@@ -55,7 +55,7 @@ jobs:
             exit 1
           fi
 
-          REMOTE_PATH_VALUE="${REMOTE_PROJECT_DIR:-/home/ubuntu/canagent}"
+          REMOTE_PATH_VALUE="${REMOTE_PROJECT_DIR:-/home/ubuntu/cannagent}"
           STACK_VALUE="${STACK_NAME:-stack-fastapi}"
           COMPOSE_FILE_VALUE="${COMPOSE_FILE:-docker-compose.prod.yaml}"
           REBUILD_VALUE="${REBUILD_FLAG:-false}"
@@ -65,20 +65,11 @@ jobs:
             "ubuntu@${EC2_HOST}" \
             "REMOTE_PROJECT_DIR='${REMOTE_PATH_VALUE}' STACK_NAME='${STACK_VALUE}' COMPOSE_FILE='${COMPOSE_FILE_VALUE}' REBUILD_IMAGES='${REBUILD_VALUE}' bash -s" <<'EOF'
               set -euo pipefail
-              REMOTE_PATH="${REMOTE_PROJECT_DIR:-/home/ubuntu/canagent}"
+              REMOTE_PATH="${REMOTE_PROJECT_DIR:-/home/ubuntu/cannagent}"
               STACK="${STACK_NAME:-stack-fastapi}"
               COMPOSE_FILE_PATH="${COMPOSE_FILE:-docker-compose.prod.yaml}"
 
               echo "Using remote path: $REMOTE_PATH"
-              echo "=== DEBUGGING SSH SESSION ==="
-              pwd
-              whoami
-              echo "Home directory contents:"
-              ls -la /home/ubuntu/
-              echo "Checking cannagent directory:"
-              ls -la /home/ubuntu/cannagent/ || echo "cannagent directory not found!"
-              echo "REMOTE_PATH variable: '$REMOTE_PATH'"
-              echo "=== END DEBUGGING ==="
               cd "$REMOTE_PATH"
 
               echo "Ensuring git state is clean..."
