@@ -70,6 +70,15 @@ jobs:
               COMPOSE_FILE_PATH="${COMPOSE_FILE:-docker-compose.prod.yaml}"
 
               echo "Using remote path: $REMOTE_PATH"
+              echo "=== DEBUGGING SSH SESSION ==="
+              pwd
+              whoami
+              echo "Home directory contents:"
+              ls -la /home/ubuntu/
+              echo "Checking cannagent directory:"
+              ls -la /home/ubuntu/cannagent/ || echo "cannagent directory not found!"
+              echo "REMOTE_PATH variable: '$REMOTE_PATH'"
+              echo "=== END DEBUGGING ==="
               cd "$REMOTE_PATH"
 
               echo "Ensuring git state is clean..."
