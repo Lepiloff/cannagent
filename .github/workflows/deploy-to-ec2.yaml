@@ -76,8 +76,11 @@ jobs:
               git fetch origin master
               git reset --hard origin/master
 
-              echo "Ensuring shared network exists..."
-              docker network inspect app_net >/dev/null 2>&1 || docker network create app_net
+              echo "Verifying cancon_canna-network exists (should be created by canna project)..."
+              if ! docker network inspect cancon_canna-network >/dev/null 2>&1; then
+                echo "ERROR: Network cancon_canna-network does not exist. Deploy canna project first."
+                exit 1
+              fi
 
               export COMPOSE_PROJECT_NAME="$STACK"
 
