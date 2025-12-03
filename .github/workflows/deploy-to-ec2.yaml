@@ -76,6 +76,13 @@ jobs:
               git fetch origin master
               git reset --hard origin/master
 
+              echo "Loading environment variables..."
+              set -a
+              if [ -f .env ]; then
+                source .env
+              fi
+              set +a
+
               echo "Verifying cancon_canna-network exists (should be created by canna project)..."
               if ! docker network inspect cancon_canna-network >/dev/null 2>&1; then
                 echo "ERROR: Network cancon_canna-network does not exist. Deploy canna project first."
@@ -88,6 +95,16 @@ jobs:
               docker-compose -f "$COMPOSE_FILE_PATH" down
               echo "Ensuring old containers are removed (in case of naming conflicts)..."
               docker rm -f canagent-api canagent-redis >/dev/null 2>&1 || true
+
+              echo "Ensuring pgvector extension is installed..."
+              if docker ps --format '{{.Names}}' | grep -q '^canna-postgres$'; then
+                docker cp scripts/init_pgvector.sql canna-postgres:/tmp/init_pgvector.sql
+                PGPASSWORD="${POSTGRES_PASSWORD:-}" docker exec -e PGPASSWORD canna-postgres \
+                  psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -f /tmp/init_pgvector.sql || \
+                  echo "WARNING: pgvector initialization failed; ensure extension is installed in DB image"
+              else
+                echo "WARNING: canna-postgres container not found; skipped pgvector initialization."
+              fi
 
               if [ "${REBUILD_IMAGES}" = "true" ]; then
                 echo "Docker config or dependencies changed, rebuilding..."
