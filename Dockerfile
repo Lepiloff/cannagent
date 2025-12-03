@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем код приложения
+# Копируем код приложения и миграции Alembic
+COPY alembic.ini ./alembic.ini
+COPY alembic/ ./alembic/
 COPY app/ ./app/
 COPY scripts/ ./scripts/
 COPY migrations/ ./migrations/
