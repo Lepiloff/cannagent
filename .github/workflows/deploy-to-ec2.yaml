@@ -88,11 +88,10 @@ jobs:
               docker-compose -f "$COMPOSE_FILE_PATH" down
 
               if [ "${REBUILD_IMAGES}" = "true" ]; then
-                echo "Rebuilding images from scratch..."
+                echo "Docker config or dependencies changed, rebuilding..."
                 docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
               else
-                echo "Refreshing images with cache..."
-                docker-compose -f "$COMPOSE_FILE_PATH" build --pull
+                echo "No Docker config or dependency changes detected; skipping rebuild."
               fi
 
               echo "Starting updated stack..."
@@ -101,4 +100,3 @@ jobs:
               echo "Current container status:"
               docker-compose -f "$COMPOSE_FILE_PATH" ps
           EOF
-
