@@ -480,6 +480,19 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -d '{"message": "Recommend strains for sleep with relaxing terpenes"}'
 ```
 
+## 🗄 Database Setup & Data Sync
+- Ensure pgvector is available in the DB: `CREATE EXTENSION IF NOT EXISTS vector;` (runs automatically in Alembic migration below).
+- Apply DB schema: `docker compose exec api alembic upgrade head` (adds multilingual embeddings and energy_type for feelings).
+- Populate data & embeddings (optional, requires CANNAMENTE_* access and OPENAI_API_KEY or MOCK_MODE=true):
+  ```bash
+  docker compose exec api python scripts/sync_strain_relations.py
+  ```
+  The sync script pulls strains/relations from cannamente, recreates local relations, and regenerates `embedding_en`/`embedding_es`.
+
+### Deploy notes
+- Deploy workflow runs Alembic migrations automatically (`alembic upgrade head`) after ensuring pgvector is available. If migrations are already applied, Alembic is a no-op.
+- Legacy SQL migrations in `migrations/*.sql` are kept for reference and are not executed during deploy.
+
 ## 🛡 Security & Production
 
 ### Security Features
