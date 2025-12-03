@@ -108,10 +108,6 @@ jobs:
                 PGPASSWORD="${POSTGRES_PASSWORD_VALUE}" docker exec -e PGPASSWORD canna-postgres \
                   psql -U "${POSTGRES_USER_VALUE}" -d "${POSTGRES_DB_VALUE}" -f /tmp/init_pgvector.sql || \
                   echo "WARNING: pgvector initialization failed; ensure extension is installed in DB image"
-
-                echo "Applying database migrations..."
-                docker-compose -f "$COMPOSE_FILE_PATH" run --rm api alembic upgrade head || \
-                  echo "WARNING: alembic upgrade failed; schema may be out of date"
               else
                 echo "WARNING: canna-postgres container not found; skipped pgvector initialization."
               fi
@@ -121,7 +117,13 @@ jobs:
                 docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
               else
                 echo "No Docker config or dependency changes detected; skipping rebuild."
+                # Ensure image is at least present for migrations
+                docker-compose -f "$COMPOSE_FILE_PATH" build
               fi
+
+              echo "Applying database migrations..."
+              docker-compose -f "$COMPOSE_FILE_PATH" run --rm api alembic -c /app/alembic.ini upgrade head || \
+                echo "WARNING: alembic upgrade failed; schema may be out of date"
 
               echo "Starting updated stack..."
               docker-compose -f "$COMPOSE_FILE_PATH" up -d
