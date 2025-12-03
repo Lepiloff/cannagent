@@ -86,6 +86,8 @@ jobs:
 
               echo "Stopping existing stack..."
               docker-compose -f "$COMPOSE_FILE_PATH" down
+              echo "Ensuring old containers are removed (in case of naming conflicts)..."
+              docker rm -f canagent-api canagent-redis >/dev/null 2>&1 || true
 
               if [ "${REBUILD_IMAGES}" = "true" ]; then
                 echo "Docker config or dependencies changed, rebuilding..."
