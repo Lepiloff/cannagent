@@ -15,7 +15,9 @@ services:
     environment:
       # Override database connection to use canna-postgres
       POSTGRES_HOST: canna-postgres
+      POSTGRES_DB: postgres
       REDIS_HOST: canagent-redis
+      # All credentials (POSTGRES_USER, POSTGRES_PASSWORD) come from .env file
     depends_on:
       redis:
         condition: service_healthy
