@@ -4,8 +4,19 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.models.database import Base
 
+# Динамическая сборка DATABASE_URL из переменных окружения
+def get_database_url():
+    user = os.getenv('POSTGRES_USER', 'postgres')
+    password = os.getenv('POSTGRES_PASSWORD', 'password')
+    host = os.getenv('POSTGRES_HOST', 'localhost')
+    port = os.getenv('POSTGRES_PORT', '5432')
+    db_name = os.getenv('POSTGRES_DB', 'postgres')
+
+    return f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+
 # Создаем движок для синхронной работы с БД (cannamente database)
-engine = create_engine(os.getenv('DATABASE_URL'))
+database_url = os.getenv('DATABASE_URL') or get_database_url()
+engine = create_engine(database_url)
 
 # Создаем сессию
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
