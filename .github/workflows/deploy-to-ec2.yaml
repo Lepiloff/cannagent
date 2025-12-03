@@ -139,17 +139,39 @@ jobs:
                 echo "WARNING: canna-postgres container not found; skipped pgvector initialization."
               fi
 
+              # Enable BuildKit for better caching
+              export DOCKER_BUILDKIT=1
+              export COMPOSE_DOCKER_CLI_BUILD=1
+
               if [ "${REBUILD_IMAGES}" = "true" ]; then
-                echo "Docker config or dependencies changed, rebuilding..."
+                echo "Docker config or dependencies changed, rebuilding with no cache..."
                 docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
               else
-                echo "No Docker config or dependency changes detected; ensuring image is built."
-                docker-compose -f "$COMPOSE_FILE_PATH" build
+                echo "No Docker config or dependency changes detected; using cached layers..."
+                # Use cached layers for faster builds
+                docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
               fi
 
               echo "Applying database migrations..."
-              docker-compose -f "$COMPOSE_FILE_PATH" run --rm --no-deps api alembic -c /app/alembic.ini upgrade head || \
-                echo "WARNING: alembic upgrade failed; schema may be out of date"
+              # Run migrations with timeout and full error output
+              MIGRATION_OUTPUT=$(mktemp)
+              if timeout 120 docker-compose -f "$COMPOSE_FILE_PATH" run --rm --no-deps api alembic -c /app/alembic.ini upgrade head 2>&1 | tee "$MIGRATION_OUTPUT"; then
+                echo "✅ Database migrations applied successfully"
+              else
+                MIGRATION_EXIT_CODE=$?
+                echo ""
+                if [ $MIGRATION_EXIT_CODE -eq 124 ]; then
+                  echo "❌ ERROR: Migration timeout after 120 seconds"
+                else
+                  echo "❌ ERROR: Database migration failed with exit code $MIGRATION_EXIT_CODE"
+                fi
+                echo "=== Full Migration Output ==="
+                cat "$MIGRATION_OUTPUT"
+                echo "=== End Migration Output ==="
+                echo ""
+                echo "⚠️  Continuing deployment despite migration failure..."
+              fi
+              rm -f "$MIGRATION_OUTPUT"
 
               echo "Starting updated stack..."
               docker-compose -f "$COMPOSE_FILE_PATH" up -d
