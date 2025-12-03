@@ -122,7 +122,7 @@ jobs:
               fi
 
               echo "Applying database migrations..."
-              docker-compose -f "$COMPOSE_FILE_PATH" run --rm api alembic -c /app/alembic.ini upgrade head || \
+              docker-compose -f "$COMPOSE_FILE_PATH" run --rm --no-deps api alembic -c /app/alembic.ini upgrade head || \
                 echo "WARNING: alembic upgrade failed; schema may be out of date"
 
               echo "Starting updated stack..."
