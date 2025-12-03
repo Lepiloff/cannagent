@@ -14,6 +14,11 @@
 
 ---
 
+## Database Prereqs (prod/local)
+- PostgreSQL with `pgvector` extension (`CREATE EXTENSION IF NOT EXISTS vector;`).
+- Schema is managed via Alembic: run `docker compose exec api alembic upgrade head` before starting (deploy workflow runs this automatically).
+- Data + embeddings can be synced from cannamente via `python scripts/sync_strain_relations.py` (needs `CANNAMENTE_*` env and `OPENAI_API_KEY` or `MOCK_MODE=true` for mock embeddings).
+
 ## Architecture Overview
 
 ```

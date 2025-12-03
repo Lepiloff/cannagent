@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from app.db.database import create_tables, SessionLocal
+from app.db.database import SessionLocal
 from app.api import chat, health, strains
 from app.utils.data_import import initialize_sample_data
 from app.core.logging import setup_logging
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starting AI Budtender application...")
 
-    create_tables()
+    # Database schema is managed via Alembic migrations (run in deploy)
     # initialize_sample_data()  # Disabled - using real data from cannamente
 
     # Initialize DB-Aware Taxonomy System

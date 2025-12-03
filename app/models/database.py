@@ -136,6 +136,8 @@ class Feeling(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True, nullable=False)
+    # Energy type for taxonomy (e.g., energizing, relaxing, neutral)
+    energy_type = Column(String(20), nullable=True)
     # Multilingual fields from cannamente
     name_en = Column(String(50), nullable=True)
     name_es = Column(String(50), nullable=True)
