@@ -76,13 +76,6 @@ jobs:
               git fetch origin master
               git reset --hard origin/master
 
-              echo "Loading environment variables..."
-              set -a
-              if [ -f .env ]; then
-                source .env
-              fi
-              set +a
-
               echo "Verifying cancon_canna-network exists (should be created by canna project)..."
               if ! docker network inspect cancon_canna-network >/dev/null 2>&1; then
                 echo "ERROR: Network cancon_canna-network does not exist. Deploy canna project first."
@@ -97,10 +90,23 @@ jobs:
               docker rm -f canagent-api canagent-redis >/dev/null 2>&1 || true
 
               echo "Ensuring pgvector extension is installed..."
+              # Pull DB creds from env/.env but avoid sourcing entire .env (may contain unquoted spaces)
+              POSTGRES_USER_VALUE="${POSTGRES_USER:-postgres}"
+              POSTGRES_PASSWORD_VALUE="${POSTGRES_PASSWORD:-}"
+              POSTGRES_DB_VALUE="${POSTGRES_DB:-postgres}"
+              if [ -f .env ]; then
+                env_user=$(sed -n 's/^POSTGRES_USER=//p' .env | tail -n1 | tr -d '\"' | xargs)
+                env_pass=$(sed -n 's/^POSTGRES_PASSWORD=//p' .env | tail -n1 | tr -d '\"' | xargs)
+                env_db=$(sed -n 's/^POSTGRES_DB=//p' .env | tail -n1 | tr -d '\"' | xargs)
+                POSTGRES_USER_VALUE="${env_user:-$POSTGRES_USER_VALUE}"
+                POSTGRES_PASSWORD_VALUE="${env_pass:-$POSTGRES_PASSWORD_VALUE}"
+                POSTGRES_DB_VALUE="${env_db:-$POSTGRES_DB_VALUE}"
+              fi
+
               if docker ps --format '{{.Names}}' | grep -q '^canna-postgres$'; then
                 docker cp scripts/init_pgvector.sql canna-postgres:/tmp/init_pgvector.sql
-                PGPASSWORD="${POSTGRES_PASSWORD:-}" docker exec -e PGPASSWORD canna-postgres \
-                  psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -f /tmp/init_pgvector.sql || \
+                PGPASSWORD="${POSTGRES_PASSWORD_VALUE}" docker exec -e PGPASSWORD canna-postgres \
+                  psql -U "${POSTGRES_USER_VALUE}" -d "${POSTGRES_DB_VALUE}" -f /tmp/init_pgvector.sql || \
                   echo "WARNING: pgvector initialization failed; ensure extension is installed in DB image"
               else
                 echo "WARNING: canna-postgres container not found; skipped pgvector initialization."
