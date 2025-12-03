@@ -153,12 +153,17 @@ jobs:
               fi
 
               echo "Applying database migrations..."
-              # Run migrations with timeout and full error output
-              MIGRATION_OUTPUT=$(mktemp)
-              if timeout 120 docker-compose -f "$COMPOSE_FILE_PATH" run --rm --no-deps api alembic -c /app/alembic.ini upgrade head 2>&1 | tee "$MIGRATION_OUTPUT"; then
+              # Run migrations with timeout and capture output
+              set +e  # Temporarily disable exit on error for migration block
+              MIGRATION_LOG="/tmp/migration_$$.log"
+              timeout 120 docker-compose -f "$COMPOSE_FILE_PATH" run --rm --no-deps api alembic -c /app/alembic.ini upgrade head > "$MIGRATION_LOG" 2>&1
+              MIGRATION_EXIT_CODE=$?
+              set -e  # Re-enable exit on error
+
+              if [ $MIGRATION_EXIT_CODE -eq 0 ]; then
                 echo "✅ Database migrations applied successfully"
+                cat "$MIGRATION_LOG" || echo "No migration output"
               else
-                MIGRATION_EXIT_CODE=$?
                 echo ""
                 if [ $MIGRATION_EXIT_CODE -eq 124 ]; then
                   echo "❌ ERROR: Migration timeout after 120 seconds"
@@ -166,15 +171,31 @@ jobs:
                   echo "❌ ERROR: Database migration failed with exit code $MIGRATION_EXIT_CODE"
                 fi
                 echo "=== Full Migration Output ==="
-                cat "$MIGRATION_OUTPUT"
+                cat "$MIGRATION_LOG"
                 echo "=== End Migration Output ==="
                 echo ""
                 echo "⚠️  Continuing deployment despite migration failure..."
               fi
-              rm -f "$MIGRATION_OUTPUT"
+              rm -f "$MIGRATION_LOG"
+
+              # Ensure migration container is removed
+              docker-compose -f "$COMPOSE_FILE_PATH" rm -f api 2>/dev/null || true
+
+              echo "DEBUG: Migration block completed, proceeding to container startup..."
 
               echo "Starting updated stack..."
               docker-compose -f "$COMPOSE_FILE_PATH" up -d
+              UP_EXIT_CODE=$?
+              echo "DEBUG: docker-compose up -d completed with exit code: $UP_EXIT_CODE"
+
+              if [ $UP_EXIT_CODE -ne 0 ]; then
+                echo "❌ ERROR: docker-compose up -d failed!"
+                docker-compose -f "$COMPOSE_FILE_PATH" ps
+                exit 1
+              fi
+
+              # Give Docker a moment to start creating containers
+              sleep 3
 
               echo "Waiting for containers to start and become healthy..."
               TIMEOUT=120
