@@ -116,8 +116,7 @@ jobs:
                 echo "Docker config or dependencies changed, rebuilding..."
                 docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
               else
-                echo "No Docker config or dependency changes detected; skipping rebuild."
-                # Ensure image is at least present for migrations
+                echo "No Docker config or dependency changes detected; ensuring image is built."
                 docker-compose -f "$COMPOSE_FILE_PATH" build
               fi
 
