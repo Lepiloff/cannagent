@@ -82,6 +82,45 @@ jobs:
                 exit 1
               fi
 
+              echo "Verifying canna-postgres container is running..."
+              if ! docker ps --format '{{.Names}}' | grep -q '^canna-postgres$'; then
+                echo "ERROR: canna-postgres container is not running. Deploy canna project first."
+                exit 1
+              fi
+
+              echo "Extracting database credentials from .env..."
+              # Pull DB creds from .env (avoid sourcing entire .env - may contain unquoted spaces)
+              POSTGRES_USER_VALUE="${POSTGRES_USER:-postgres}"
+              POSTGRES_PASSWORD_VALUE="${POSTGRES_PASSWORD:-}"
+              POSTGRES_DB_VALUE="${POSTGRES_DB:-postgres}"
+              if [ -f .env ]; then
+                env_user=$(sed -n 's/^POSTGRES_USER=//p' .env | tail -n1 | tr -d '"' | xargs)
+                env_pass=$(sed -n 's/^POSTGRES_PASSWORD=//p' .env | tail -n1 | tr -d '"' | xargs)
+                env_db=$(sed -n 's/^POSTGRES_DB=//p' .env | tail -n1 | tr -d '"' | xargs)
+                POSTGRES_USER_VALUE="${env_user:-$POSTGRES_USER_VALUE}"
+                POSTGRES_PASSWORD_VALUE="${env_pass:-$POSTGRES_PASSWORD_VALUE}"
+                POSTGRES_DB_VALUE="${env_db:-$POSTGRES_DB_VALUE}"
+              fi
+
+              echo "Checking database accessibility..."
+              # Test database connection (retry up to 5 times)
+              DB_READY=false
+              for i in {1..5}; do
+                if PGPASSWORD="${POSTGRES_PASSWORD_VALUE}" docker exec canna-postgres \
+                  psql -U "${POSTGRES_USER_VALUE}" -d "${POSTGRES_DB_VALUE}" -c "SELECT 1" >/dev/null 2>&1; then
+                  DB_READY=true
+                  echo "✅ Database is accessible"
+                  break
+                fi
+                echo "Database not ready, waiting... (attempt $i/5)"
+                sleep 2
+              done
+
+              if [ "$DB_READY" = false ]; then
+                echo "❌ ERROR: Database is not accessible after 5 attempts"
+                exit 1
+              fi
+
               export COMPOSE_PROJECT_NAME="$STACK"
 
               echo "Stopping existing stack..."
@@ -90,18 +129,6 @@ jobs:
               docker rm -f canagent-api canagent-redis >/dev/null 2>&1 || true
 
               echo "Ensuring pgvector extension is installed..."
-              # Pull DB creds from env/.env but avoid sourcing entire .env (may contain unquoted spaces)
-              POSTGRES_USER_VALUE="${POSTGRES_USER:-postgres}"
-              POSTGRES_PASSWORD_VALUE="${POSTGRES_PASSWORD:-}"
-              POSTGRES_DB_VALUE="${POSTGRES_DB:-postgres}"
-              if [ -f .env ]; then
-                env_user=$(sed -n 's/^POSTGRES_USER=//p' .env | tail -n1 | tr -d '\"' | xargs)
-                env_pass=$(sed -n 's/^POSTGRES_PASSWORD=//p' .env | tail -n1 | tr -d '\"' | xargs)
-                env_db=$(sed -n 's/^POSTGRES_DB=//p' .env | tail -n1 | tr -d '\"' | xargs)
-                POSTGRES_USER_VALUE="${env_user:-$POSTGRES_USER_VALUE}"
-                POSTGRES_PASSWORD_VALUE="${env_pass:-$POSTGRES_PASSWORD_VALUE}"
-                POSTGRES_DB_VALUE="${env_db:-$POSTGRES_DB_VALUE}"
-              fi
 
               if docker ps --format '{{.Names}}' | grep -q '^canna-postgres$'; then
                 docker cp scripts/init_pgvector.sql canna-postgres:/tmp/init_pgvector.sql
@@ -127,6 +154,57 @@ jobs:
               echo "Starting updated stack..."
               docker-compose -f "$COMPOSE_FILE_PATH" up -d
 
-              echo "Current container status:"
+              echo "Waiting for containers to start and become healthy..."
+              TIMEOUT=120
+              ELAPSED=0
+              ALL_HEALTHY=false
+
+              while [ $ELAPSED -lt $TIMEOUT ]; do
+                # Get container status
+                API_STATUS=$(docker inspect --format='{{.State.Status}}' canagent-api 2>/dev/null || echo "missing")
+                REDIS_STATUS=$(docker inspect --format='{{.State.Status}}' canagent-redis 2>/dev/null || echo "missing")
+                API_HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' canagent-api 2>/dev/null || echo "missing")
+                REDIS_HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' canagent-redis 2>/dev/null || echo "missing")
+
+                echo "[$ELAPSED s] API: $API_STATUS ($API_HEALTH) | Redis: $REDIS_STATUS ($REDIS_HEALTH)"
+
+                # Check if containers are running and healthy
+                if [ "$API_STATUS" = "running" ] && [ "$REDIS_STATUS" = "running" ]; then
+                  # Wait for healthchecks or accept no-healthcheck as healthy
+                  if { [ "$API_HEALTH" = "healthy" ] || [ "$API_HEALTH" = "no-healthcheck" ]; } && \
+                     { [ "$REDIS_HEALTH" = "healthy" ] || [ "$REDIS_HEALTH" = "no-healthcheck" ]; }; then
+                    ALL_HEALTHY=true
+                    break
+                  fi
+                fi
+
+                # Check if any container is restarting or exited
+                if [ "$API_STATUS" = "restarting" ] || [ "$API_STATUS" = "exited" ] || \
+                   [ "$REDIS_STATUS" = "restarting" ] || [ "$REDIS_STATUS" = "exited" ]; then
+                  echo "ERROR: Container(s) in bad state!"
+                  break
+                fi
+
+                sleep 5
+                ELAPSED=$((ELAPSED + 5))
+              done
+
+              echo ""
+              echo "Final container status:"
               docker-compose -f "$COMPOSE_FILE_PATH" ps
+
+              if [ "$ALL_HEALTHY" = false ]; then
+                echo ""
+                echo "ERROR: Deployment failed - containers did not become healthy within $TIMEOUT seconds"
+                echo ""
+                echo "=== API Container Logs ==="
+                docker logs canagent-api --tail 100 2>&1 || echo "Failed to get API logs"
+                echo ""
+                echo "=== Redis Container Logs ==="
+                docker logs canagent-redis --tail 50 2>&1 || echo "Failed to get Redis logs"
+                exit 1
+              fi
+
+              echo ""
+              echo "SUCCESS: All containers are running and healthy!"
           EOF
