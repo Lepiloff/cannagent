@@ -5,11 +5,13 @@ from alembic import context
 import os
 import sys
 
-# Add the app directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Ensure /app is on PYTHONPATH inside the container
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 from app.models.database import Base
-from app.config import settings
+from app.db.database import database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -30,7 +32,7 @@ target_metadata = Base.metadata
 # ... etc.
 
 def get_url():
-    return settings.database_url
+    return database_url
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
