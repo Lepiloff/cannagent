@@ -296,8 +296,8 @@ class StrainRepository:
             self.db.refresh(condition)
         return condition
     
-    def create_strain(self, strain_data: dict, embedding: Optional[List[float]] = None) -> StrainModel:
-        """Создание нового штамма с эмбеддингом"""
+    def create_strain(self, strain_data: dict, embedding_en: Optional[List[float]] = None, embedding_es: Optional[List[float]] = None) -> StrainModel:
+        """Создание нового штамма с эмбеддингами (en/es)"""
         db_strain = StrainModel(
             name=strain_data["name"],
             title=strain_data.get("title"),
@@ -316,7 +316,8 @@ class StrainRepository:
             main=strain_data.get("main", False),
             is_review=strain_data.get("is_review", False),
             slug=strain_data.get("slug"),
-            embedding=embedding
+            embedding_en=embedding_en,
+            embedding_es=embedding_es
         )
         self.db.add(db_strain)
         self.db.commit()
