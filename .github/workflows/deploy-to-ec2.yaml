@@ -33,10 +33,17 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
-          if echo "$CHANGED_FILES" | grep -Eq '^(Dockerfile|requirements\.txt|docker-compose\.prod\.yaml)$'; then
-            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          # Check for Docker/dependency changes (supports any path)
+          if echo "$CHANGED_FILES" | grep -Eq '(^|/)(Dockerfile|requirements\.txt|docker-compose\.prod\.yaml)$'; then
+            echo "rebuild=full" >> "$GITHUB_OUTPUT"
+            echo "🔨 FULL REBUILD: Docker or dependency files changed"
+          # Check for Python code changes only
+          elif echo "$CHANGED_FILES" | grep -Eq '\.(py|ini)$'; then
+            echo "rebuild=quick" >> "$GITHUB_OUTPUT"
+            echo "⚡ QUICK REBUILD: Only Python code changed"
           else
-            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+            echo "rebuild=none" >> "$GITHUB_OUTPUT"
+            echo "✓ NO REBUILD: No build-impacting changes"
           fi
 
       - name: Add SSH key
@@ -143,20 +150,53 @@ jobs:
               export DOCKER_BUILDKIT=1
               export COMPOSE_DOCKER_CLI_BUILD=1
 
-              if [ "${REBUILD_IMAGES}" = "true" ]; then
-                echo "Docker config or dependencies changed, rebuilding with no cache..."
-                docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
-              else
-                echo "No Docker config or dependency changes detected; using cached layers..."
-                # Use cached layers for faster builds
-                docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
-              fi
+              # Smart 3-tier build strategy
+              case "${REBUILD_IMAGES}" in
+                "full")
+                  echo "🔨 FULL REBUILD: Docker/dependency files changed - rebuilding with no cache..."
+                  docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
+                  ;;
+                "quick")
+                  echo "⚡ QUICK REBUILD: Only code changed - using cached layers..."
+                  docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
+                  ;;
+                "none")
+                  echo "✓ NO REBUILD: Using existing images..."
+                  # Validate that images exist
+                  if ! docker images | grep -q "canagent-api"; then
+                    echo "⚠️  WARNING: canagent-api image not found, forcing rebuild..."
+                    docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
+                  else
+                    echo "✓ Existing image found, skipping build"
+                  fi
+                  ;;
+                *)
+                  echo "⚠️  Unknown rebuild mode: ${REBUILD_IMAGES}, defaulting to quick rebuild..."
+                  docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
+                  ;;
+              esac
+
+              # Pre-deployment validation
+              echo ""
+              echo "=== Pre-Deployment Validation ==="
+              echo "Checking built images..."
+              docker images | grep -E "(canagent-api|redis)" || echo "⚠️  WARNING: Expected images not found"
+
+              echo ""
+              echo "Checking Docker Compose configuration..."
+              docker-compose -f "$COMPOSE_FILE_PATH" config --quiet || {
+                echo "❌ ERROR: Invalid docker-compose configuration"
+                exit 1
+              }
+              echo "✓ Configuration valid"
+              echo "=== Validation Complete ==="
+              echo ""
 
               echo "Applying database migrations..."
-              # Run migrations with timeout and capture output
+              # Run migrations with proper flags: --rm (auto-remove), --no-TTY, --no-deps (no dependencies)
               set +e  # Temporarily disable exit on error for migration block
               MIGRATION_LOG="/tmp/migration_$$.log"
-              timeout 120 docker-compose -f "$COMPOSE_FILE_PATH" run --rm --no-deps api alembic -c /app/alembic.ini upgrade head > "$MIGRATION_LOG" 2>&1
+              timeout 120 docker-compose -f "$COMPOSE_FILE_PATH" run --rm -T --no-deps api alembic -c /app/alembic.ini upgrade head > "$MIGRATION_LOG" 2>&1
               MIGRATION_EXIT_CODE=$?
               set -e  # Re-enable exit on error
 
@@ -178,24 +218,34 @@ jobs:
               fi
               rm -f "$MIGRATION_LOG"
 
-              # Ensure migration container is removed
-              docker-compose -f "$COMPOSE_FILE_PATH" rm -f api 2>/dev/null || true
+              # Note: --rm flag auto-removes the migration container, no manual cleanup needed
+              echo "Migration block completed, proceeding to container startup..."
 
-              echo "DEBUG: Migration block completed, proceeding to container startup..."
-
-              echo "Starting updated stack..."
+              echo ""
+              echo "=== Starting Updated Stack ==="
+              echo "Launching containers..."
               docker-compose -f "$COMPOSE_FILE_PATH" up -d
               UP_EXIT_CODE=$?
-              echo "DEBUG: docker-compose up -d completed with exit code: $UP_EXIT_CODE"
 
               if [ $UP_EXIT_CODE -ne 0 ]; then
-                echo "❌ ERROR: docker-compose up -d failed!"
-                docker-compose -f "$COMPOSE_FILE_PATH" ps
+                echo ""
+                echo "❌ ERROR: docker-compose up -d failed with exit code: $UP_EXIT_CODE"
+                echo ""
+                echo "=== Current Container Status ==="
+                docker-compose -f "$COMPOSE_FILE_PATH" ps -a
+                echo ""
+                echo "=== Docker Compose Logs ==="
+                docker-compose -f "$COMPOSE_FILE_PATH" logs --tail=50
+                echo ""
+                echo "=== Available Docker Images ==="
+                docker images | grep canagent
                 exit 1
               fi
 
-              # Give Docker a moment to start creating containers
-              sleep 3
+              echo "✓ Docker Compose up command succeeded"
+              echo ""
+              echo "Waiting for containers to initialize (5 seconds)..."
+              sleep 5
 
               echo "Waiting for containers to start and become healthy..."
               TIMEOUT=120
@@ -233,21 +283,36 @@ jobs:
               done
 
               echo ""
-              echo "Final container status:"
+              echo "=== Final Deployment Status ==="
+              echo ""
+              echo "Container status:"
               docker-compose -f "$COMPOSE_FILE_PATH" ps
+              echo ""
+              echo "Network connectivity:"
+              docker network inspect cancon_canna-network --format '{{range .Containers}}{{.Name}} {{end}}' || echo "Network inspection failed"
 
               if [ "$ALL_HEALTHY" = false ]; then
                 echo ""
-                echo "ERROR: Deployment failed - containers did not become healthy within $TIMEOUT seconds"
+                echo "❌ ERROR: Deployment failed - containers did not become healthy within $TIMEOUT seconds"
                 echo ""
-                echo "=== API Container Logs ==="
+                echo "=== API Container Logs (last 100 lines) ==="
                 docker logs canagent-api --tail 100 2>&1 || echo "Failed to get API logs"
                 echo ""
-                echo "=== Redis Container Logs ==="
+                echo "=== Redis Container Logs (last 50 lines) ==="
                 docker logs canagent-redis --tail 50 2>&1 || echo "Failed to get Redis logs"
+                echo ""
+                echo "=== Docker Events (last 50) ==="
+                docker events --since 2m --until 0s 2>&1 | tail -50 || echo "Failed to get Docker events"
                 exit 1
               fi
 
               echo ""
-              echo "SUCCESS: All containers are running and healthy!"
+              echo "✅ SUCCESS: All containers are running and healthy!"
+              echo ""
+              echo "Deployed services:"
+              echo "  • API:   http://$(hostname -I | awk '{print $1}'):8000"
+              echo "  • Redis: Running on internal network"
+              echo ""
+              echo "Quick health check:"
+              docker exec canagent-api curl -sf http://localhost:8000/api/v1/ping/ || echo "⚠️  Health endpoint not responding yet"
           EOF
