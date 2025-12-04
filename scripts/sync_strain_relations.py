@@ -32,16 +32,16 @@ from app.core.llm_interface import get_llm
 
 
 def get_cannamente_connection():
-    """Connect to cannamente database using settings with fallbacks"""
-    
-    # Get connection parameters from environment variables
+    """
+    Connect to the primary database (cannamente).
+    """
+
     cannamente_host = os.getenv('CANNAMENTE_POSTGRES_HOST', 'cannamente-db')
     cannamente_port = int(os.getenv('CANNAMENTE_POSTGRES_PORT', '5432'))
     cannamente_db = os.getenv('CANNAMENTE_POSTGRES_DB', 'mydatabase')
     cannamente_user = os.getenv('CANNAMENTE_POSTGRES_USER', 'myuser')
     cannamente_password = os.getenv('CANNAMENTE_POSTGRES_PASSWORD', 'mypassword')
-    
-    # Try different connection methods with environment variables
+
     connection_configs = [
         {
             'host': cannamente_host,
