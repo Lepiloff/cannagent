@@ -94,13 +94,18 @@ def get_cannamente_connection():
 
 def get_local_connection():
     """Connect to AI Budtender local database"""
-    # Use environment variables for configuration
+    host = os.getenv('POSTGRES_HOST', 'canna-postgres')
+    port = int(os.getenv('POSTGRES_PORT', '5432'))
+    database = os.getenv('POSTGRES_DB', 'postgres')
+    user = os.getenv('POSTGRES_USER', 'postgres')
+    password = os.getenv('POSTGRES_PASSWORD', 'postgres')
+
     return psycopg2.connect(
-        host=os.getenv('POSTGRES_HOST', 'db'),
-        port=int(os.getenv('POSTGRES_PORT', '5432')),
-        database=os.getenv('POSTGRES_DB', 'ai_budtender'),
-        user=os.getenv('POSTGRES_USER', 'ai_user'),
-        password=os.getenv('POSTGRES_PASSWORD', 'ai_password')
+        host=host,
+        port=port,
+        database=database,
+        user=user,
+        password=password
     )
 
 
@@ -356,7 +361,13 @@ def apply_database_schema():
     print("📋 Applying multilingual database schema...")
 
     # Use correct canagent database connection
-    default_url = "postgresql://ai_user:ai_password@db:5432/ai_budtender"
+    default_url = (
+        f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:"
+        f"{os.getenv('POSTGRES_PASSWORD', 'postgres')}@"
+        f"{os.getenv('POSTGRES_HOST', 'canna-postgres')}:"
+        f"{os.getenv('POSTGRES_PORT', '5432')}/"
+        f"{os.getenv('POSTGRES_DB', 'postgres')}"
+    )
     canagent_engine = create_engine(os.getenv("DATABASE_URL", default_url))
 
     # First create all tables using SQLAlchemy models
@@ -427,7 +438,13 @@ def main():
         
         # Step 2: Create tables using SQLAlchemy
         print("🔧 Creating database schema...")
-        default_url = "postgresql://ai_user:ai_password@db:5432/ai_budtender" 
+        default_url = (
+            f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:"
+            f"{os.getenv('POSTGRES_PASSWORD', 'postgres')}@"
+            f"{os.getenv('POSTGRES_HOST', 'canna-postgres')}:"
+            f"{os.getenv('POSTGRES_PORT', '5432')}/"
+            f"{os.getenv('POSTGRES_DB', 'postgres')}"
+        )
         canagent_engine = create_engine(os.getenv("DATABASE_URL", default_url))
         
         print("🔧 Creating base tables with SQLAlchemy...")
