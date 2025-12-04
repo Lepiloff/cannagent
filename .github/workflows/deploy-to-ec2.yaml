@@ -192,7 +192,32 @@ jobs:
               echo "=== Validation Complete ==="
               echo ""
 
-              echo "Applying database migrations..."
+              # Start Redis first (required for migrations and API startup)
+              echo "=== Starting Redis Service ==="
+              echo "Starting Redis container..."
+              docker-compose -f "$COMPOSE_FILE_PATH" up -d redis
+
+              echo "Waiting for Redis to become healthy..."
+              REDIS_READY=false
+              for i in {1..30}; do
+                REDIS_STATUS=$(docker inspect --format='{{.State.Health.Status}}' canagent-redis 2>/dev/null || echo "missing")
+                if [ "$REDIS_STATUS" = "healthy" ]; then
+                  REDIS_READY=true
+                  echo "✅ Redis is healthy"
+                  break
+                fi
+                echo "[$i/30] Redis status: $REDIS_STATUS, waiting..."
+                sleep 2
+              done
+
+              if [ "$REDIS_READY" = false ]; then
+                echo "❌ ERROR: Redis did not become healthy in time"
+                docker logs canagent-redis --tail 50
+                exit 1
+              fi
+              echo ""
+
+              echo "=== Applying Database Migrations ==="
               # Run migrations with proper flags: --rm (auto-remove), --no-TTY, --no-deps (no dependencies)
               set +e  # Temporarily disable exit on error for migration block
               MIGRATION_LOG="/tmp/migration_$$.log"
@@ -222,14 +247,14 @@ jobs:
               echo "Migration block completed, proceeding to container startup..."
 
               echo ""
-              echo "=== Starting Updated Stack ==="
-              echo "Launching containers..."
-              docker-compose -f "$COMPOSE_FILE_PATH" up -d
+              echo "=== Starting API Service ==="
+              echo "Launching API container (Redis already running)..."
+              docker-compose -f "$COMPOSE_FILE_PATH" up -d api
               UP_EXIT_CODE=$?
 
               if [ $UP_EXIT_CODE -ne 0 ]; then
                 echo ""
-                echo "❌ ERROR: docker-compose up -d failed with exit code: $UP_EXIT_CODE"
+                echo "❌ ERROR: docker-compose up -d api failed with exit code: $UP_EXIT_CODE"
                 echo ""
                 echo "=== Current Container Status ==="
                 docker-compose -f "$COMPOSE_FILE_PATH" ps -a
@@ -242,9 +267,9 @@ jobs:
                 exit 1
               fi
 
-              echo "✓ Docker Compose up command succeeded"
+              echo "✓ API container started successfully"
               echo ""
-              echo "Waiting for containers to initialize (5 seconds)..."
+              echo "Waiting for API to initialize (5 seconds)..."
               sleep 5
 
               echo "Waiting for containers to start and become healthy..."
