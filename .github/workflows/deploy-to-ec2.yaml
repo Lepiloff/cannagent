@@ -128,12 +128,11 @@ jobs:
                 exit 1
               fi
 
-              export COMPOSE_PROJECT_NAME="$STACK"
-
               echo "Stopping existing stack..."
-              docker-compose -f "$COMPOSE_FILE_PATH" down
-              echo "Ensuring old containers are removed (in case of naming conflicts)..."
-              docker rm -f canagent-api canagent-redis >/dev/null 2>&1 || true
+              # Use explicit container names since docker-compose.prod.yaml uses container_name
+              docker stop canagent-api canagent-redis >/dev/null 2>&1 || true
+              docker rm canagent-api canagent-redis >/dev/null 2>&1 || true
+              echo "✓ Old containers removed"
 
               echo "Ensuring pgvector extension is installed..."
 
@@ -218,10 +217,22 @@ jobs:
               echo ""
 
               echo "=== Applying Database Migrations ==="
-              # Run migrations with proper flags: --rm (auto-remove), --no-TTY, --no-deps (no dependencies)
+              # Run migrations using docker run (not docker-compose run to avoid conflicts)
               set +e  # Temporarily disable exit on error for migration block
               MIGRATION_LOG="/tmp/migration_$$.log"
-              timeout 120 docker-compose -f "$COMPOSE_FILE_PATH" run --rm -T --no-deps api alembic -c /app/alembic.ini upgrade head > "$MIGRATION_LOG" 2>&1
+
+              # Load environment variables from .env file
+              if [ -f .env ]; then
+                export $(grep -v '^#' .env | xargs)
+              fi
+
+              timeout 120 docker run --rm \
+                --network cancon_canna-network \
+                --env-file .env \
+                -e POSTGRES_HOST=canna-postgres \
+                -e REDIS_HOST=canagent-redis \
+                canagent-api:latest \
+                alembic -c /app/alembic.ini upgrade head > "$MIGRATION_LOG" 2>&1
               MIGRATION_EXIT_CODE=$?
               set -e  # Re-enable exit on error
 
