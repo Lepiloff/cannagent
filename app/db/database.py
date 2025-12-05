@@ -1,8 +1,11 @@
 import os
+import logging
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.models.database import Base
+
+logger = logging.getLogger(__name__)
 
 # Динамическая сборка DATABASE_URL из переменных окружения
 def get_database_url():
@@ -37,19 +40,14 @@ def get_db():
 
 # Проверка подключения к БД
 def check_db_connection():
-    """Проверка подключения к базе данных"""
+    """Проверка подключения к базе данных (logs only errors)"""
     try:
         with engine.connect() as conn:
-            # Проверяем подключение и наличие таблиц
+            # Быстрая проверка подключения
             result = conn.execute(text("SELECT 1"))
             result.fetchone()
-            
-            # Дополнительно проверяем наличие таблицы strains_strain
-            result = conn.execute(text("SELECT COUNT(*) FROM strains_strain"))
-            count = result.fetchone()[0]
-            print(f"Database connection OK. Found {count} strains in database.")
-            
             return True
     except Exception as e:
-        print(f"Database connection error: {e}")
+        # Логируем ТОЛЬКО ошибки подключения
+        logger.error(f"❌ Database connection failed: {e}")
         return False 
