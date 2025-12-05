@@ -34,13 +34,17 @@ jobs:
           echo "$CHANGED_FILES"
 
           # Check for Docker/dependency changes (supports any path)
-          if echo "$CHANGED_FILES" | grep -Eq '(^|/)(Dockerfile|requirements\.txt|docker-compose\.prod\.yaml)$'; then
+          if echo "$CHANGED_FILES" | grep -Eq '(^|/)(Dockerfile|requirements\.txt)$'; then
             echo "rebuild=full" >> "$GITHUB_OUTPUT"
-            echo "🔨 FULL REBUILD: Docker or dependency files changed"
-          # Check for Python code changes only
+            echo "🔨 FULL REBUILD: Dockerfile or dependencies changed"
+          # Check for Python code changes
           elif echo "$CHANGED_FILES" | grep -Eq '\.(py|ini)$'; then
             echo "rebuild=quick" >> "$GITHUB_OUTPUT"
-            echo "⚡ QUICK REBUILD: Only Python code changed"
+            echo "⚡ QUICK REBUILD: Python code changed"
+          # Check for docker-compose or config changes (no rebuild needed, just restart)
+          elif echo "$CHANGED_FILES" | grep -Eq '(docker-compose\.prod\.yaml|\.env)$'; then
+            echo "rebuild=none" >> "$GITHUB_OUTPUT"
+            echo "🔄 NO REBUILD: Only runtime config changed (will restart)"
           else
             echo "rebuild=none" >> "$GITHUB_OUTPUT"
             echo "✓ NO REBUILD: No build-impacting changes"
