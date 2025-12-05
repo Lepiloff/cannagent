@@ -350,5 +350,5 @@ jobs:
               echo "  • Redis: Running on internal network"
               echo ""
               echo "Quick health check:"
-              docker exec canagent-api curl -sf http://localhost:8000/api/v1/ping/ || echo "⚠️  Health endpoint not responding yet"
+              docker exec canagent-api python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/api/v1/ping/', timeout=5).read().decode())" 2>/dev/null && echo "✅ API health endpoint responding" || echo "⚠️  Health endpoint not responding yet"
           EOF
