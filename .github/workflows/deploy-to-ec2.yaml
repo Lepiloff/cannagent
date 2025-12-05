@@ -284,7 +284,7 @@ jobs:
               sleep 5
 
               echo "Waiting for containers to start and become healthy..."
-              TIMEOUT=120
+              TIMEOUT=150
               ELAPSED=0
               ALL_HEALTHY=false
 
@@ -329,7 +329,7 @@ jobs:
 
               if [ "$ALL_HEALTHY" = false ]; then
                 echo ""
-                echo "❌ ERROR: Deployment failed - containers did not become healthy within $TIMEOUT seconds"
+                echo "❌ ERROR: Deployment failed - containers did not become healthy within 150 seconds"
                 echo ""
                 echo "=== API Container Logs (last 100 lines) ==="
                 docker logs canagent-api --tail 100 2>&1 || echo "Failed to get API logs"
