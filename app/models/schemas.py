@@ -155,10 +155,11 @@ class CompactStrain(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="User message") 
+    message: str = Field(..., description="User message")
     history: Optional[List[str]] = Field(default=None, description="Message history")
     session_id: Optional[str] = Field(default=None, description="Session identifier for context continuity")
     source_platform: Optional[str] = Field(default=None, description="Source platform for analytics")
+    language: Optional[str] = Field(default=None, description="User language (es/en) from geolocation")
 
 
 class ChatResponse(BaseModel):
