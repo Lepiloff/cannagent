@@ -64,6 +64,7 @@ class SmartRAGService:
         self,
         query: str,
         session_id: Optional[str] = None,
+        language: Optional[str] = None,
         history: Optional[List[str]] = None,
         source_platform: Optional[str] = None
     ) -> ChatResponse:
@@ -83,11 +84,12 @@ class SmartRAGService:
         session = self.session_manager.get_or_restore_session(session_id)
 
         # Process with Streamlined RAG v4.0
-        return self._streamlined_process_query(query, session)
+        return self._streamlined_process_query(query, session, language)
     def _streamlined_process_query(
         self,
         query: str,
-        session: ConversationSession
+        session: ConversationSession,
+        explicit_language: Optional[str] = None
     ) -> ChatResponse:
         """
         Streamlined RAG v4.0 - Упрощённая обработка запросов
@@ -105,6 +107,10 @@ class SmartRAGService:
         """
 
         logger.info(f"🚀 Streamlined RAG v4.0: Processing query '{query[:50]}...'")
+
+        # Determine language with priority: explicit > session > default
+        detected_language = self._determine_language(explicit_language, session)
+        logger.info(f"Language determined: {detected_language} (explicit: {explicit_language}, session: {session.detected_language})")
 
         # Получаем session context для анализа
         session_context = self._build_session_context(session)
@@ -129,7 +135,8 @@ class SmartRAGService:
             analysis = self.streamlined_analyzer.analyze_query(
                 user_query=query,
                 session_context=analysis_context,
-                found_strains=None  # Will be filled after search
+                found_strains=None,  # Will be filled after search
+                explicit_language=detected_language
             )
             logger.info(f"Analysis: category={analysis.detected_category}, is_follow_up={analysis.is_follow_up}, language={analysis.detected_language}")
         except Exception as e:
@@ -143,7 +150,7 @@ class SmartRAGService:
                 is_follow_up=False,
                 natural_response="I can help you find the right strain.",
                 suggested_follow_ups=[],
-                detected_language=self._detect_language(query),
+                detected_language=detected_language,
                 confidence=0.5
             )
 
@@ -346,7 +353,8 @@ class SmartRAGService:
                     user_query=query,
                     session_context=session_context,
                     found_strains=strain_info,
-                    fallback_used=fallback_used  # Pass fallback info to LLM
+                    fallback_used=fallback_used,  # Pass fallback info to LLM
+                    explicit_language=detected_language
                 )
                 analysis = final_analysis
             except Exception as e:
@@ -754,41 +762,6 @@ class SmartRAGService:
             is_fallback=False
         )
 
-    def _handle_reset(self, session: ConversationSession, query: str) -> ChatResponse:
-        """Обработка команды сброса"""
-        
-        logger.info("Handling reset command")
-        
-        # Очистка контекста сессии
-        session.recommended_strains_history = []
-        session.conversation_history = []
-        session.current_topic = None
-        session.previous_topics = []
-        
-        # Определение языка для ответа
-        language = detect_language(query)
-        
-        responses = {
-            'es': "Perfecto, empecemos de nuevo. ¿Qué tipo de efectos buscas?",
-            'en': "Perfect, let's start fresh. What kind of effects are you looking for?"
-        }
-        
-        quick_actions = self._get_new_search_suggestions(language)
-        
-        return ChatResponse(
-            response=responses.get(language, responses['es']),
-            recommended_strains=[],
-            detected_intent='reset',
-            filters_applied={},
-            session_id=session.session_id,
-            query_type='reset',
-            language=language,
-            confidence=1.0,
-            quick_actions=quick_actions,
-            is_restored=session.is_restored,
-            is_fallback=False
-        )
-    
     def _build_compact_strains(self, strains: List[Strain]) -> List[CompactStrain]:
         """Создание компактных объектов сортов для UI"""
         
@@ -921,12 +894,21 @@ class SmartRAGService:
         
         return any(indicator in query_lower for indicator in reset_indicators)
     
-    def _detect_language(self, text: str) -> str:
-        """Простая детекция языка"""
-        
-        spanish_indicators = ['para', 'necesito', 'quiero', 'cuál', 'qué', 'más', 'mejor']
-        text_lower = text.lower()
-        
-        spanish_count = sum(1 for word in spanish_indicators if word in text_lower)
-        return 'es' if spanish_count > 0 else 'en'
+    def _determine_language(self, explicit_language: Optional[str], session: ConversationSession) -> str:
+        """
+        Determine language with priority:
+        1. Explicit language (from geolocation)
+        2. Session language
+        3. Default to 'es' (Spanish market default)
+        """
+        # Priority 1: Explicit language from request (geolocation)
+        if explicit_language and explicit_language in ['es', 'en']:
+            return explicit_language
+
+        # Priority 2: Session language
+        if session.detected_language and session.detected_language in ['es', 'en']:
+            return session.detected_language
+
+        # Priority 3: Default to Spanish (for Spanish-speaking markets)
+        return 'es'
     

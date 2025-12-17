@@ -59,7 +59,7 @@ make sync-strains     # Syncs feelings, effects, medical uses + embeddings
 ### ✅ STAGE 1: Multilingual Support (EN/ES)
 - **Dual Embeddings**: Separate 1536-dimensional vectors for English (`embedding_en`) and Spanish (`embedding_es`)
 - **Multilingual Fields**: All metadata (feelings, helps_with, flavors, negatives) available in both languages
-- **Language Detection**: Automatic query language detection with appropriate embedding selection
+- **Language Support**: Geolocation-based language detection (es/en) with fallback support
 - **Database Migration**: Single unified migration (`001_init_multilingual_database.sql`) creates complete multilingual structure
 - **Synced Data**: 173 strains with dual embeddings from cannamente database
 
@@ -161,6 +161,11 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
 curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "¿Qué me recomiendas para creatividad y concentración?"}'
+
+# With explicit language from geolocation (recommended)
+curl -X POST http://localhost:8001/api/v1/chat/ask/ \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What'\''s good for relaxation?", "language": "es"}'
 ```
 
 ## ⚙️ Configuration
@@ -291,6 +296,24 @@ curl -X POST http://localhost:8001/api/v1/chat/ask/ \
   -H "Content-Type: application/json" \
   -d '{"message": "What helps with chronic pain? I prefer high THC strains"}'
 ```
+
+### API Request Format
+
+**Enhanced request with language detection:**
+```json
+{
+  "message": "What's good for relaxation?",
+  "language": "es",        // Optional: explicit language (es/en) from geolocation
+  "session_id": "uuid",    // Optional: for conversation context
+  "history": [...],        // Optional: conversation history
+  "source_platform": ""   // Optional: analytics tracking
+}
+```
+
+**Language Priority:**
+1. **Explicit language** (from geolocation) - highest priority
+2. **Session language** (from previous queries) - fallback
+3. **Default to Spanish** ('es') - market default
 
 ### Complete API Response Format
 
@@ -633,7 +656,7 @@ canagent/
 - ✅ PostgreSQL pg_trgm extension for trigram similarity matching (typo tolerance)
 - ✅ Session-based context preservation
 - ✅ Follow-up query detection
-- ✅ Bilingual support (EN/ES) with language auto-detection
+- ✅ Bilingual support (EN/ES) with geolocation-based language detection
 
 ### 🔧 v7.1 - DB-Aware Architecture Phase 1 (January 2025)
 **🎯 Intelligent taxonomy caching and fuzzy matching**
@@ -655,7 +678,7 @@ canagent/
 - ✅ **STAGE 1: Multilingual Embeddings**
   - Dual embeddings (`embedding_en`, `embedding_es`) for all 173 strains
   - Unified migration `001_init_multilingual_database.sql` creates complete multilingual structure
-  - Automatic language detection with appropriate embedding selection
+  - Geolocation-based language detection with appropriate embedding selection
   - All metadata available in English and Spanish
 
 - ✅ **STAGE 2: Terpenes Support**
