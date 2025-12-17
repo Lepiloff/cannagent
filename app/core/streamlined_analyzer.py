@@ -84,7 +84,8 @@ class StreamlinedQueryAnalyzer:
         user_query: str,
         session_context: Optional[Dict[str, Any]] = None,
         found_strains: Optional[List[Dict[str, Any]]] = None,
-        fallback_used: bool = False
+        fallback_used: bool = False,
+        explicit_language: Optional[str] = None
     ) -> QueryAnalysis:
         """
         Главный метод анализа запроса
@@ -104,17 +105,17 @@ class StreamlinedQueryAnalyzer:
             context = self._build_context(user_query, session_context, found_strains, fallback_used)
 
             # Анализ через LLM
-            raw_result = self._analyze_with_llm(context)
+            raw_result = self._analyze_with_llm(context, explicit_language)
 
             # Парсинг результата
-            analysis = self._parse_result(raw_result, user_query)
+            analysis = self._parse_result(raw_result, user_query, explicit_language)
 
             logger.info(f"Analysis completed: category={analysis.detected_category}, language={analysis.detected_language}")
             return analysis
 
         except Exception as e:
             logger.error(f"Analysis failed: {e}", exc_info=True)
-            return self._fallback_analysis(user_query)
+            return self._fallback_analysis(user_query, explicit_language)
 
     def _build_context(
         self,
@@ -166,7 +167,7 @@ class StreamlinedQueryAnalyzer:
 
         return context
 
-    def _analyze_with_llm(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
         """Анализ через LLM с динамическим DB контекстом"""
 
         # Build DB context if ContextBuilder available
@@ -345,11 +346,7 @@ Analyze the user's query and provide:
 6. **Follow-up Suggestions**:
    - Suggest 2-3 relevant follow-up questions
    - Make them contextual to the user's query
-   - Use the detected language
-
-7. **Language Detection**:
-   - Detect if query is in Spanish (es) or English (en)
-   - Default to Spanish if uncertain
+   - Use appropriate language for responses
 
 CRITICAL GUIDELINES:
 - Category is ONLY for pre-filtering - don't over-specify
@@ -388,7 +385,6 @@ RESPONSE FORMAT (JSON only):
   "required_terpenes": ["terpene1", "terpene2"] or null,
   "natural_response": "Response mentioning specific strains (answer based on previous strains if is_follow_up=true)",
   "suggested_follow_ups": ["follow-up 1", "follow-up 2", "follow-up 3"],
-  "detected_language": "es|en",
   "confidence": 0.0-1.0
 }}
 
@@ -411,7 +407,6 @@ Query: "hey, how can you help me"
   "required_terpenes": null,
   "natural_response": "¡Hola! I'm your cannabis budtender. I can help you find the perfect strain based on your needs - whether you're looking for relaxation, energy, pain relief, or specific flavors. What would you like to know?",
   "suggested_follow_ups": ["Show me relaxing strains", "I need something for sleep", "What's good for pain relief?"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 
@@ -429,7 +424,6 @@ Query: "hola, ¿qué puedes hacer?"
   "required_terpenes": null,
   "natural_response": "¡Hola! Puedo ayudarte a encontrar la cepa perfecta según tus necesidades - ya sea relajación, energía, alivio del dolor, o sabores específicos. ¿Qué buscas?",
   "suggested_follow_ups": ["Muéstrame cepas relajantes", "Necesito algo para dormir", "¿Qué es bueno para el dolor?"],
-  "detected_language": "es",
   "confidence": 0.95
 }}
 
@@ -447,7 +441,6 @@ Query: "thank you!"
   "required_terpenes": null,
   "natural_response": "You're welcome! Feel free to ask if you need anything else. I'm here to help you find the perfect strain!",
   "suggested_follow_ups": ["Show me popular strains", "I need something energizing", "Help with anxiety"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 
@@ -461,7 +454,6 @@ Query: "necesito algo para dormir mejor"
   "cbd_level": null,
   "natural_response": "Te recomendaría Northern Lights, una indica clásica perfecta para dormir. Su alto contenido de THC y efectos relajantes te ayudarán a conciliar el sueño profundamente.",
   "suggested_follow_ups": ["¿Prefieres algo con más CBD?", "¿Necesitas algo que no cause somnolencia matutina?", "¿Te interesan otras indicas similares?"],
-  "detected_language": "es",
   "confidence": 0.95
 }}
 
@@ -479,7 +471,6 @@ Query: "show me high THC strains"
   "required_terpenes": null,
   "natural_response": "I found several high-THC strains for you. GMO Cookies (28% THC) and Kush Mints (28% THC) are excellent choices with potent effects.",
   "suggested_follow_ups": ["Would you like sativa or indica?", "Any specific effects you're looking for?", "Do you prefer a particular flavor profile?"],
-  "detected_language": "en",
   "confidence": 0.9
 }}
 
@@ -490,7 +481,6 @@ Query: "suggest me sativa strains with low thc"
   "cbd_level": null,
   "natural_response": "For a mild sativa, I recommend Harlequin (5% THC). It provides gentle energy and focus without overwhelming psychoactive effects, perfect for beginners.",
   "suggested_follow_ups": ["Would you like higher CBD for medical benefits?", "Any specific effects you're looking for?", "Do you prefer citrus or earthy flavors?"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 
@@ -501,7 +491,6 @@ Query: "dame algo energético para trabajar"
   "cbd_level": null,
   "natural_response": "Para trabajar te recomiendo Green Crack, una sativa energizante que mejora el foco y la creatividad sin causar ansiedad. Perfecto para uso diurno productivo.",
   "suggested_follow_ups": ["¿Prefieres algo con menos THC?", "¿Necesitas algo que también ayude con creatividad?", "¿Te interesan híbridos con efecto similar?"],
-  "detected_language": "es",
   "confidence": 0.95
 }}
 
@@ -518,7 +507,6 @@ Query: "which strains help with pain?"
   "required_terpenes": null,
   "natural_response": "For pain relief, I recommend Blue Dream and ACDC. Blue Dream offers balanced effects with moderate THC, while ACDC is high in CBD for medical benefits without strong psychoactive effects.",
   "suggested_follow_ups": ["Do you prefer indica or sativa?", "Would you like high-CBD options?", "Any specific type of pain?"],
-  "detected_language": "en",
   "confidence": 0.9
 }}
 
@@ -535,7 +523,6 @@ Query: "suggest me indica with tropical flavor and high thc"
   "required_terpenes": null,
   "natural_response": "I'll find you an indica with tropical flavors and high THC. Watermelon Zkittlez (24% THC) offers sweet tropical notes with strong relaxing effects, perfect for evening use.",
   "suggested_follow_ups": ["Would you like something sweeter?", "Do you need help with sleep?", "Any specific effects you're looking for?"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 
@@ -556,7 +543,6 @@ Query: "do you have info about Tropicana Cookies?"
   "required_terpenes": null,
   "natural_response": "Tropicana Cookies is a sativa strain with 16% THC. It's known for energizing and creative effects with a tropical, citrus flavor profile - perfect for daytime use.",
   "suggested_follow_ups": ["Would you like similar sativa strains?", "Any other strain you'd like to know about?", "Looking for something for a specific purpose?"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 
@@ -575,7 +561,6 @@ Query: "cuéntame sobre ACDC"
   "required_terpenes": null,
   "natural_response": "ACDC es una cepa híbrida con muy bajo THC (1%) y alto CBD (14%). Es ideal para beneficios medicinales sin efectos psicoactivos fuertes, excelente para dolor y estrés.",
   "suggested_follow_ups": ["¿Quieres otras cepas con alto CBD?", "¿Buscas algo para alguna condición específica?", "¿Te interesan cepas similares?"],
-  "detected_language": "es",
   "confidence": 0.95
 }}
 
@@ -590,7 +575,6 @@ Query: "which one has less thc" (or "cual tiene menos thc")
   "is_follow_up": true,
   "natural_response": "Animal Mints has the lowest THC at 16%, followed by Animal Cookies at 19%.",
   "suggested_follow_ups": ["Tell me about Animal Mints effects", "Do you have something even milder?", "Compare Animal Mints and Animal Cookies"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 
@@ -603,7 +587,6 @@ Query: "and suggest me indica with tropical flavor and high thc"
   "is_follow_up": false,
   "natural_response": "Te recomiendo buscar indicas con sabores tropicales y alto THC. Aunque la combinación exacta puede ser rara, puedo buscar opciones similares.",
   "suggested_follow_ups": ["¿Prefieres algo con sabor cítrico?", "¿Te interesan híbridos tropicales?", "¿Qué nivel de THC buscas exactamente?"],
-  "detected_language": "es",
   "confidence": 0.85
 }}
 
@@ -616,7 +599,6 @@ Query: "cual es el más potente" (or "which is the strongest")
   "is_follow_up": true,
   "natural_response": "De esos, Northern Lights es el más potente con 21% de THC.",
   "suggested_follow_ups": ["¿Cuáles son los efectos?", "¿Necesitas algo más fuerte?", "¿Comparar con Blue Dream?"],
-  "detected_language": "es",
   "confidence": 0.95
 }}
 
@@ -629,7 +611,6 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
   "is_follow_up": true,
   "natural_response": "From the previous list, only Blue Dream is a hybrid. It offers balanced effects between relaxation and energy.",
   "suggested_follow_ups": ["Would you like more hybrid options?", "Tell me about Blue Dream effects", "Show me similar hybrids"],
-  "detected_language": "en",
   "confidence": 0.95
 }}
 """
@@ -670,7 +651,7 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
             logger.debug(f"LLM response: {response}")
             raise
 
-    def _parse_result(self, raw_result: Dict[str, Any], original_query: str) -> QueryAnalysis:
+    def _parse_result(self, raw_result: Dict[str, Any], original_query: str, explicit_language: Optional[str] = None) -> QueryAnalysis:
         """Парсинг и валидация результата LLM"""
 
         try:
@@ -739,6 +720,9 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
             if required_terpenes and not isinstance(required_terpenes, list):
                 required_terpenes = None
 
+            # Use explicit language if provided, otherwise fallback to LLM result, then default to 'es'
+            final_language = explicit_language or raw_result.get("detected_language", "es")
+
             analysis = QueryAnalysis(
                 detected_category=category,
                 thc_level=thc_level,
@@ -753,7 +737,7 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
                 required_terpenes=required_terpenes,
                 natural_response=raw_result.get("natural_response", "I can help you find the right strain."),
                 suggested_follow_ups=raw_result.get("suggested_follow_ups", []),
-                detected_language=raw_result.get("detected_language", "es"),
+                detected_language=final_language,
                 confidence=raw_result.get("confidence", 0.9)
             )
 
@@ -763,7 +747,7 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
             logger.error(f"Error parsing LLM result: {e}")
             raise
 
-    def _fallback_analysis(self, user_query: str) -> QueryAnalysis:
+    def _fallback_analysis(self, user_query: str, explicit_language: Optional[str] = None) -> QueryAnalysis:
         """Fallback анализ если LLM не работает"""
 
         query_lower = user_query.lower()
@@ -795,6 +779,9 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
         elif any(word in query_lower for word in ["high cbd", "alto cbd", "medical", "medicinal"]):
             cbd_level = "high"
 
+        # Use explicit language or default to Spanish
+        final_language = explicit_language or "es"
+
         return QueryAnalysis(
             detected_category=category,
             thc_level=thc_level,
@@ -802,7 +789,7 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
             is_search_query=True,  # Default to search query in fallback
             natural_response="Puedo ayudarte a encontrar el sorta perfecto. ¿Podrías darme más detalles sobre lo que buscas?",
             suggested_follow_ups=["¿Prefieres indica, sativa o híbrido?", "¿Para qué momento del día?", "¿Algún efecto específico?"],
-            detected_language="es",
+            detected_language=final_language,
             confidence=0.5
         )
 

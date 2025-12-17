@@ -28,6 +28,7 @@ async def ask_question(
         response = rag_service.process_contextual_query(
             query=chat_request.message,
             session_id=chat_request.session_id,
+            language=chat_request.language,
             history=chat_request.history,
             source_platform=chat_request.source_platform
         )
