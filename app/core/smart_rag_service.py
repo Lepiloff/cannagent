@@ -1,7 +1,16 @@
 import logging
 from typing import List, Optional, Dict, Any
 from app.models.session import ConversationSession
-from app.models.schemas import ChatResponse, CompactStrain, CompactFeeling, CompactHelpsWith, CompactNegative, CompactFlavor, Strain
+from app.models.schemas import (
+    ChatResponse,
+    CompactStrain,
+    CompactFeeling,
+    CompactHelpsWith,
+    CompactNegative,
+    CompactFlavor,
+    CompactTerpene,
+    Strain,
+)
 from app.models.database import Strain as StrainModel  # For direct DB queries
 from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
@@ -741,7 +750,7 @@ class SmartRAGService:
         response_text = self._substitute_strain_placeholders(analysis.natural_response, strains)
 
         # Build compact strains
-        compact_strains = self._build_compact_strains(strains)
+        compact_strains = self._build_compact_strains(strains, language=analysis.detected_language)
 
         # Quick actions
         quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(
@@ -762,13 +771,50 @@ class SmartRAGService:
             is_fallback=False
         )
 
-    def _build_compact_strains(self, strains: List[Strain]) -> List[CompactStrain]:
-        """Создание компактных объектов сортов для UI"""
+    def _build_compact_strains(self, strains: List[Strain], language: Optional[str] = None) -> List[CompactStrain]:
+        """Создание компактных объектов сортов для UI (с учётом языка EN/ES)"""
+
+        lang = language if language in ("en", "es") else "en"
+
+        def localized_taxonomy_name(obj: Any) -> Optional[str]:
+            """
+            Taxonomy models (Feeling/Flavor/HelpsWith/Negative) имеют поля name/name_en/name_es.
+            Для UI возвращаем name в нужной локали, иначе fallback на доступное значение.
+            """
+            if obj is None:
+                return None
+            if lang == "es":
+                return getattr(obj, "name_es", None) or getattr(obj, "name_en", None) or getattr(obj, "name", None)
+            return getattr(obj, "name_en", None) or getattr(obj, "name_es", None) or getattr(obj, "name", None)
         
         compact_strains = []
         for strain in strains:
             # Очистка имени
             clean_name = strain.name.split(' | ')[0] if strain.name else strain.name
+
+            feelings = []
+            for f in (strain.feelings or []):
+                feeling_name = localized_taxonomy_name(f)
+                if feeling_name:
+                    feelings.append(CompactFeeling(name=feeling_name))
+
+            helps_with = []
+            for h in (strain.helps_with or []):
+                helps_name = localized_taxonomy_name(h)
+                if helps_name:
+                    helps_with.append(CompactHelpsWith(name=helps_name))
+
+            negatives = []
+            for n in (strain.negatives or []):
+                negative_name = localized_taxonomy_name(n)
+                if negative_name:
+                    negatives.append(CompactNegative(name=negative_name))
+
+            flavors = []
+            for fl in (strain.flavors or []):
+                flavor_name = localized_taxonomy_name(fl)
+                if flavor_name:
+                    flavors.append(CompactFlavor(name=flavor_name))
             
             compact_strain = CompactStrain(
                 id=strain.id,
@@ -779,10 +825,11 @@ class SmartRAGService:
                 category=strain.category,
                 slug=strain.slug,
                 url=self._build_strain_url(strain.slug or ""),
-                feelings=[CompactFeeling(name=f.name) for f in strain.feelings] if strain.feelings else [],
-                helps_with=[CompactHelpsWith(name=h.name) for h in strain.helps_with] if strain.helps_with else [],
-                negatives=[CompactNegative(name=n.name) for n in strain.negatives] if strain.negatives else [],
-                flavors=[CompactFlavor(name=fl.name) for fl in strain.flavors] if strain.flavors else []
+                feelings=feelings,
+                helps_with=helps_with,
+                negatives=negatives,
+                flavors=flavors,
+                terpenes=[CompactTerpene(name=t.name) for t in (strain.terpenes or []) if getattr(t, "name", None)]
             )
             compact_strains.append(compact_strain)
         
