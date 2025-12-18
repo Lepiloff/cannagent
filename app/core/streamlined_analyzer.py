@@ -98,7 +98,7 @@ class StreamlinedQueryAnalyzer:
         Returns:
             QueryAnalysis с категорией и natural response
         """
-        logger.info(f"Streamlined analysis for query: {user_query[:50]}...")
+        logger.info(f"Streamlined analysis for query: {user_query[:50]}... (language={explicit_language})")
 
         try:
             # Формируем минимальный контекст
