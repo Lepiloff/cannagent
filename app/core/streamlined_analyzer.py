@@ -102,7 +102,13 @@ class StreamlinedQueryAnalyzer:
 
         try:
             # Формируем минимальный контекст
-            context = self._build_context(user_query, session_context, found_strains, fallback_used)
+            context = self._build_context(
+                user_query,
+                session_context,
+                found_strains,
+                fallback_used,
+                explicit_language=explicit_language
+            )
 
             # Анализ через LLM
             raw_result = self._analyze_with_llm(context, explicit_language)
@@ -122,16 +128,21 @@ class StreamlinedQueryAnalyzer:
         user_query: str,
         session_context: Optional[Dict[str, Any]],
         found_strains: Optional[List[Dict[str, Any]]],
-        fallback_used: bool = False
+        fallback_used: bool = False,
+        explicit_language: Optional[str] = None
     ) -> Dict[str, Any]:
         """Построение минимального контекста для LLM"""
+
+        # Explicit language takes priority over session language (mirrors SmartRAGService logic)
+        target_language = explicit_language if explicit_language in ["en", "es"] else None
 
         # Базовый контекст
         context = {
             "user_query": user_query,
             "has_session": session_context is not None and len(session_context.get("conversation_history", [])) > 0,
             "conversation_summary": "",
-            "previous_language": "es",
+            "previous_language": target_language or "es",
+            "target_language": target_language or "es",
             "fallback_note": "Note: Exact match not found. Showing closest alternatives." if fallback_used else ""
         }
 
@@ -144,7 +155,9 @@ class StreamlinedQueryAnalyzer:
                     f"User: {entry.get('query', '')[:40]}"
                     for entry in recent
                 ])
-                context["previous_language"] = session_context.get("detected_language", "es")
+                if not target_language:
+                    context["previous_language"] = session_context.get("detected_language", "es")
+                    context["target_language"] = context["previous_language"]
 
             # Получаем recommended_strains из session_context если есть
             recommended_strains = session_context.get("recommended_strains", [])
@@ -170,6 +183,8 @@ class StreamlinedQueryAnalyzer:
     def _analyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
         """Анализ через LLM с динамическим DB контекстом"""
 
+        target_language = explicit_language or context.get("target_language", "es")
+
         # Build DB context if ContextBuilder available
         db_context_section = ""
         if self.context_builder:
@@ -177,7 +192,7 @@ class StreamlinedQueryAnalyzer:
                 # Get DB taxonomy data
                 llm_context = self.context_builder.build_llm_context(
                     user_query=context["user_query"],
-                    language=context.get("previous_language", "es"),
+                    language=target_language,
                     session_context=None,  # Already in context
                     found_strains=None,
                     fallback_used=bool(context.get("fallback_note"))
@@ -198,6 +213,7 @@ class StreamlinedQueryAnalyzer:
 
 USER CONTEXT:
 User query: "{user_query}"
+Target language: {target_language}
 Previous language: {previous_language}
 Conversation summary: {conversation_summary}
 Recommended strains: {recommended_strains}
@@ -303,7 +319,7 @@ Analyze the user's query and provide:
    **IMPORTANT**:
    - Return empty array [] if not mentioned
    - Write EXACTLY as user wrote - fuzzy matching happens in SQL
-   - Both EN/ES accepted: "relajado" and "relaxed" both OK
+   - DO NOT translate/localize extracted attributes; keep them as written by the user
    - DB context contains ALL available values - use it as reference!
 
 5. **Follow-up Query Detection** (CRITICAL LOGIC - analyze carefully):
@@ -337,7 +353,7 @@ Analyze the user's query and provide:
    - Example: If "Recommended strains" = [Afghan Kush (15% THC), Hindu Kush (19% THC)], and query is "which has less thc", answer must be "Afghan Kush has the lowest THC at 15%"
 
 5. **Natural Response**:
-   - Generate helpful, friendly response in the detected language
+   - Generate helpful, friendly response in the target language
    - If strains are recommended, explain WHY they fit the request
    - Mention 1-2 specific strains by name with brief explanation
    - Keep response concise (2-3 sentences)
@@ -346,7 +362,7 @@ Analyze the user's query and provide:
 6. **Follow-up Suggestions**:
    - Suggest 2-3 relevant follow-up questions
    - Make them contextual to the user's query
-   - Use appropriate language for responses
+   - Use the target language
 
 CRITICAL GUIDELINES:
 - Category is ONLY for pre-filtering - don't over-specify
@@ -354,6 +370,7 @@ CRITICAL GUIDELINES:
 - Focus on high-quality natural response
 - Keep it simple and helpful
 - **FOLLOW-UP DETECTION IS CRITICAL**: If user references previous results, set is_follow_up=true
+ - **LANGUAGE IS CRITICAL**: natural_response and suggested_follow_ups MUST be in the target language
 
 ⚠️ **ABSOLUTELY CRITICAL FOR FOLLOW-UP QUERIES**:
 When is_follow_up=true, you MUST follow these rules for "natural_response":
