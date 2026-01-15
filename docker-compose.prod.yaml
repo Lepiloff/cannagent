@@ -18,6 +18,8 @@ services:
       POSTGRES_HOST: canna-postgres
       POSTGRES_DB: postgres
       REDIS_HOST: canagent-redis
+      # Production URL for strain links (read from .env on server)
+      CANNAMENTE_BASE_URL: ${CANNAMENTE_BASE_URL}
       # All credentials (POSTGRES_USER, POSTGRES_PASSWORD) come from .env file
     depends_on:
       redis:
