@@ -157,25 +157,25 @@ jobs:
               case "${REBUILD_IMAGES}" in
                 "full")
                   echo "🔨 FULL REBUILD: Docker/dependency files changed - rebuilding with no cache..."
-                  docker-compose -f "$COMPOSE_FILE_PATH" build --no-cache
+                  docker compose -f "$COMPOSE_FILE_PATH" build --no-cache
                   ;;
                 "quick")
                   echo "⚡ QUICK REBUILD: Only code changed - using cached layers..."
-                  docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
+                  docker compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
                   ;;
                 "none")
                   echo "✓ NO REBUILD: Using existing images..."
                   # Validate that images exist
                   if ! docker images | grep -q "canagent-api"; then
                     echo "⚠️  WARNING: canagent-api image not found, forcing rebuild..."
-                    docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
+                    docker compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
                   else
                     echo "✓ Existing image found, skipping build"
                   fi
                   ;;
                 *)
                   echo "⚠️  Unknown rebuild mode: ${REBUILD_IMAGES}, defaulting to quick rebuild..."
-                  docker-compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
+                  docker compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
                   ;;
               esac
 
@@ -187,7 +187,7 @@ jobs:
 
               echo ""
               echo "Checking Docker Compose configuration..."
-              docker-compose -f "$COMPOSE_FILE_PATH" config --quiet || {
+              docker compose -f "$COMPOSE_FILE_PATH" config --quiet || {
                 echo "❌ ERROR: Invalid docker-compose configuration"
                 exit 1
               }
@@ -198,7 +198,7 @@ jobs:
               # Start Redis first (required for migrations and API startup)
               echo "=== Starting Redis Service ==="
               echo "Starting Redis container..."
-              docker-compose -f "$COMPOSE_FILE_PATH" up -d redis
+              docker compose -f "$COMPOSE_FILE_PATH" up -d redis
 
               echo "Waiting for Redis to become healthy..."
               REDIS_READY=false
@@ -264,18 +264,18 @@ jobs:
               echo ""
               echo "=== Starting API Service ==="
               echo "Launching API container (Redis already running)..."
-              docker-compose -f "$COMPOSE_FILE_PATH" up -d api
+              docker compose -f "$COMPOSE_FILE_PATH" up -d api
               UP_EXIT_CODE=$?
 
               if [ $UP_EXIT_CODE -ne 0 ]; then
                 echo ""
-                echo "❌ ERROR: docker-compose up -d api failed with exit code: $UP_EXIT_CODE"
+                echo "❌ ERROR: docker compose up -d api failed with exit code: $UP_EXIT_CODE"
                 echo ""
                 echo "=== Current Container Status ==="
-                docker-compose -f "$COMPOSE_FILE_PATH" ps -a
+                docker compose -f "$COMPOSE_FILE_PATH" ps -a
                 echo ""
                 echo "=== Docker Compose Logs ==="
-                docker-compose -f "$COMPOSE_FILE_PATH" logs --tail=50
+                docker compose -f "$COMPOSE_FILE_PATH" logs --tail=50
                 echo ""
                 echo "=== Available Docker Images ==="
                 docker images | grep canagent
@@ -326,7 +326,7 @@ jobs:
               echo "=== Final Deployment Status ==="
               echo ""
               echo "Container status:"
-              docker-compose -f "$COMPOSE_FILE_PATH" ps
+              docker compose -f "$COMPOSE_FILE_PATH" ps
               echo ""
               echo "Network connectivity:"
               docker network inspect cancon_canna-network --format '{{range .Containers}}{{.Name}} {{end}}' || echo "Network inspection failed"
