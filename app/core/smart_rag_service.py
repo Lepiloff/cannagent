@@ -17,9 +17,12 @@ from app.db.repository import StrainRepository
 from app.core.llm_interface import get_llm
 
 # Streamlined RAG v4.0 Components
-from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysis
+from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysis, FollowUpIntent
 from app.core.category_filter import FilterFactory, FilterChain
 from app.core.vector_search_service import VectorSearchService
+
+# Deterministic Follow-up Executor (FIX-001)
+from app.core.follow_up_executor import FollowUpExecutor, detect_follow_up_intent_keywords
 
 # DB-Aware Architecture - Taxonomy System
 from app.core.taxonomy_init import get_taxonomy_system
@@ -67,7 +70,10 @@ class SmartRAGService:
         self.vector_search = VectorSearchService(self.llm_interface, repository.db)
         self.filter_factory = FilterFactory()
 
-        logger.info("🚀 Streamlined RAG v4.0 initialized")
+        # FIX-001: Deterministic follow-up executor (eliminates hallucinations)
+        self.follow_up_executor = FollowUpExecutor()
+
+        logger.info("🚀 Streamlined RAG v4.0 initialized with deterministic follow-up executor")
     
     def process_contextual_query(
         self,
@@ -181,12 +187,26 @@ class SmartRAGService:
                 filters_applied={"is_search_query": False, "reason": "greeting_or_general_question"}
             )
 
-        # Step 3: Handle follow-up queries with session context (SIMPLE)
+        # Step 3: Handle follow-up queries with DETERMINISTIC executor (FIX-001)
         if analysis.is_follow_up and session_strains:
-            logger.info(f"🔄 Follow-up query detected - returning session strains")
+            logger.info(f"🔄 Follow-up query detected - using deterministic executor")
 
-            # Simply return session strains (LLM already answered in natural_response)
-            result_strains = session_strains
+            # Get follow_up_intent from LLM analysis or detect via keywords
+            intent = analysis.follow_up_intent
+            if not intent:
+                # Fallback: detect intent from query keywords
+                logger.info("No follow_up_intent from LLM, using keyword detection")
+                intent = detect_follow_up_intent_keywords(query)
+
+            # Execute deterministically - NO LLM HALLUCINATION POSSIBLE
+            result_strains, deterministic_response = self.follow_up_executor.execute(
+                intent=intent,
+                session_strains=session_strains,
+                language=analysis.detected_language
+            )
+
+            # Override LLM response with deterministic response
+            analysis.natural_response = deterministic_response
 
             # Update session
             self._update_session_streamlined(session, query, analysis, result_strains)
@@ -199,7 +219,7 @@ class SmartRAGService:
                 analysis,
                 result_strains,
                 session,
-                filters_applied={"is_follow_up": True}
+                filters_applied={"is_follow_up": True, "deterministic_executor": True}
             )
 
         # Step 2.5: Handle SPECIFIC STRAIN queries (return only 1 strain, not 5 similar)
@@ -347,7 +367,7 @@ class SmartRAGService:
                 limit=5
             )
 
-        # Step 5: Re-analyze with found strains to improve natural response
+        # Step 5: FIX-003 - Use mini-prompt for re-analysis (10x smaller, 3-4x faster)
         if result_strains:
             try:
                 strain_info = [
@@ -358,16 +378,15 @@ class SmartRAGService:
                     }
                     for s in result_strains[:5]
                 ]
-                final_analysis = self.streamlined_analyzer.analyze_query(
-                    user_query=query,
-                    session_context=session_context,
-                    found_strains=strain_info,
-                    fallback_used=fallback_used,  # Pass fallback info to LLM
-                    explicit_language=detected_language
+                # Use mini-prompt instead of full analysis
+                improved_response = self.streamlined_analyzer.generate_response_only(
+                    query=query,
+                    strains=strain_info,
+                    language=detected_language
                 )
-                analysis = final_analysis
+                analysis.natural_response = improved_response
             except Exception as e:
-                logger.warning(f"Failed to re-analyze with strains: {e}")
+                logger.warning(f"Mini-prompt re-analysis failed: {e}")
                 # Keep original analysis
 
         # Step 6: Add fallback notice if exact match not found

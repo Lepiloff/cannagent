@@ -9,8 +9,8 @@ Streamlined Query Analyzer - Упрощённая версия для векто
 Векторный поиск - ОСНОВНОЙ метод поиска. SQL только для категории.
 """
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List, TYPE_CHECKING, Literal
+from pydantic import BaseModel, Field, validator
 from app.core.llm_interface import LLMInterface
 import json
 import logging
@@ -19,6 +19,33 @@ if TYPE_CHECKING:
     from app.core.context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
+
+
+class FollowUpIntent(BaseModel):
+    """
+    Structured intent for follow-up queries.
+    Extracted by LLM but executed deterministically.
+    """
+    action: Literal["compare", "filter", "sort", "select", "describe"] = Field(
+        default="describe",
+        description="Action to perform: compare, filter, sort, select, describe"
+    )
+    field: Optional[str] = Field(
+        None,
+        description="Field to operate on: thc, cbd, category"
+    )
+    order: Optional[Literal["asc", "desc"]] = Field(
+        None,
+        description="Sort order for compare/sort"
+    )
+    filter_value: Optional[str] = Field(
+        None,
+        description="Value to filter by"
+    )
+    strain_indices: Optional[List[int]] = Field(
+        None,
+        description="Strain indices for select (0-based)"
+    )
 
 
 class QueryAnalysis(BaseModel):
@@ -33,11 +60,16 @@ class QueryAnalysis(BaseModel):
     # Specific strain query detection (return only 1 strain, not 5 similar)
     specific_strain_name: Optional[str] = Field(None, description="Exact strain name if user asks about specific strain")
 
-    # Follow-up query detection (SIMPLE)
+    # Follow-up query detection
     is_follow_up: bool = Field(default=False, description="Whether this is a follow-up query referencing previous results")
 
+    # NEW: Structured follow-up intent for deterministic execution
+    follow_up_intent: Optional[FollowUpIntent] = Field(
+        None,
+        description="Structured intent for follow-up queries (used for deterministic execution)"
+    )
+
     # Exact attribute extraction for SQL pre-filtering (PostgreSQL fuzzy matching)
-    # Extract as written by user - fuzzy matching handled by PostgreSQL similarity
     required_flavors: Optional[List[str]] = Field(None, description="Flavors mentioned (as written): ['tropical', 'citrus']")
     required_effects: Optional[List[str]] = Field(None, description="Effects mentioned (as written): ['relaxed', 'sleepy']")
     required_helps_with: Optional[List[str]] = Field(None, description="Medical uses (as written): ['pain', 'anxiety']")
@@ -48,6 +80,21 @@ class QueryAnalysis(BaseModel):
     suggested_follow_ups: List[str] = Field(default_factory=list, description="Предлагаемые follow-up действия")
     detected_language: str = Field(default="es", description="Обнаруженный язык (es|en)")
     confidence: float = Field(default=0.9, description="Уверенность в анализе (0.0-1.0)")
+
+    @validator('detected_category')
+    def validate_category(cls, v):
+        if v is None:
+            return None
+        v = str(v).strip().capitalize()
+        if v.lower() == "null" or v == "":
+            return None
+        if v not in ["Indica", "Sativa", "Hybrid"]:
+            return None
+        return v
+
+    @validator('confidence')
+    def validate_confidence(cls, v):
+        return max(0.0, min(1.0, float(v)))
 
 
 class StreamlinedQueryAnalyzer:
@@ -78,6 +125,50 @@ class StreamlinedQueryAnalyzer:
                 "StreamlinedQueryAnalyzer initialized without ContextBuilder - "
                 "using hardcoded taxonomy data (not recommended)"
             )
+
+    def generate_response_only(
+        self,
+        query: str,
+        strains: List[Dict[str, Any]],
+        language: str = "en"
+    ) -> str:
+        """
+        FIX-003: Mini-prompt for re-analysis.
+        Generates ONLY natural_response without full analysis.
+        ~10x smaller prompt = ~3-4x faster.
+        """
+        strain_info = ", ".join([
+            f"{s.get('name', '?')} ({s.get('category', '?')}, {s.get('thc', '?')}% THC)"
+            for s in strains[:5]
+        ])
+
+        if language == "es":
+            prompt = f"""Eres un budtender experto. Genera una respuesta breve.
+Consulta: "{query}"
+Cepas: {strain_info}
+Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre.
+Respuesta:"""
+        else:
+            prompt = f"""You are an expert cannabis budtender. Generate a helpful response.
+Query: "{query}"
+Strains: {strain_info}
+Write 2-3 sentences recommending these strains. Mention 1-2 by name.
+Response:"""
+
+        try:
+            response = self.llm.generate_response(prompt)
+            response = response.strip()
+            if response.startswith('"') and response.endswith('"'):
+                response = response[1:-1]
+            return response
+        except Exception as e:
+            logger.warning(f"Mini-prompt failed: {e}")
+            if strains:
+                first = strains[0].get('name', 'this strain')
+                if language == "es":
+                    return f"Te recomiendo {first}. Es una excelente opción."
+                return f"I recommend {first}. It's a great option for you."
+            return "I found some great options for you!"
 
     def analyze_query(
         self,
@@ -322,37 +413,38 @@ Analyze the user's query and provide:
    - DO NOT translate/localize extracted attributes; keep them as written by the user
    - DB context contains ALL available values - use it as reference!
 
-5. **Follow-up Query Detection** (CRITICAL LOGIC - analyze carefully):
+5. **Follow-up Query Detection** (CRITICAL):
 
-   **is_follow_up = TRUE** only if ALL conditions met:
+   **is_follow_up = TRUE** if ALL conditions:
    ✓ Previous strains exist in "Recommended strains"
-   ✓ User operates on EXISTING results (sort/filter/compare/select operations)
+   ✓ User operates on EXISTING results (compare/filter/sort/select)
    ✓ NO new search criteria introduced
-   ✓ Query references the same context as previous query
 
-   **is_follow_up = FALSE** if ANY of these:
-   ✗ User introduces NEW search criteria:
-     - Different category than previous (Indica→Sativa, Sativa→Hybrid, etc.)
-     - New effects requested (energy, sleep, creativity, etc.)
-     - New flavors/taste (tropical, citrus, earthy, etc.)
-     - New medical use (pain, anxiety, insomnia, etc.)
-     - New THC/CBD level different from previous
-   ✗ User requests NEW recommendations (suggest/find/show/recommend)
-   ✗ Requirements changed from previous query
+   **is_follow_up = FALSE** if ANY:
+   ✗ User introduces NEW criteria (different category, new effects, new flavors)
+   ✗ User requests NEW search (suggest/find/show/recommend with new parameters)
 
-   **Examples:**
-   - Previous: "show sativa high thc", Current: "which one has lowest thc" → TRUE (sorting same results)
-   - Previous: "recommend indica", Current: "the strongest one" → TRUE (selecting from same list)
-   - Previous: "show sativa", Current: "and suggest indica with tropical flavor" → FALSE (NEW: category + flavor)
-   - Previous: "high thc strains", Current: "also find something for sleep" → FALSE (NEW: medical purpose)
-   - Previous: "indica strains", Current: "and recommend sativa for energy" → FALSE (NEW: category + effect)
+5.5. **Follow-up Intent Extraction** (ONLY when is_follow_up=true):
+   Extract structured intent for deterministic execution:
 
-   **CRITICAL FOR FOLLOW-UP**: If is_follow_up=true, you MUST answer based ONLY on the strains listed in "Recommended strains" above.
-   - DO NOT mention strains that are not in the "Recommended strains" list
-   - Find the answer by analyzing ONLY the strains provided in the context
-   - Example: If "Recommended strains" = [Afghan Kush (15% THC), Hindu Kush (19% THC)], and query is "which has less thc", answer must be "Afghan Kush has the lowest THC at 15%"
+   **action** (required): "compare" | "filter" | "sort" | "select" | "describe"
+   **field** (for compare/sort): "thc" | "cbd" | "category"
+   **order** (for compare/sort): "asc" (lowest/mildest) | "desc" (highest/strongest)
+   **filter_value** (for filter): "Indica" | "Sativa" | "Hybrid"
+   **strain_indices** (for select): [0] for first, [1] for second, etc.
 
-5. **Natural Response**:
+   **Intent Examples:**
+   - "which has highest THC" → {{"action":"compare","field":"thc","order":"desc"}}
+   - "which is mildest" → {{"action":"compare","field":"thc","order":"asc"}}
+   - "show only indica" → {{"action":"filter","field":"category","filter_value":"Indica"}}
+   - "the first one" → {{"action":"select","strain_indices":[0]}}
+   - "tell me about them" → {{"action":"describe"}}
+
+   **IMPORTANT**: When is_follow_up=true, natural_response is IGNORED.
+   The system will use follow_up_intent to generate response deterministically.
+   You can set natural_response to a placeholder like "Follow-up processed".
+
+6. **Natural Response** (for NEW searches only):
    - Generate helpful, friendly response in the target language
    - If strains are recommended, explain WHY they fit the request
    - Mention 1-2 specific strains by name with brief explanation
@@ -390,246 +482,49 @@ When is_follow_up=true, you MUST follow these rules for "natural_response":
 RESPONSE FORMAT (JSON only):
 {{
   "is_search_query": true|false,
-  "specific_strain_name": "Strain Name|null",
-  "detected_category": "Indica|Sativa|Hybrid|null",
-  "thc_level": "low|medium|high|null",
-  "cbd_level": "low|medium|high|null",
+  "specific_strain_name": "Strain Name"|null,
+  "detected_category": "Indica"|"Sativa"|"Hybrid"|null,
+  "thc_level": "low"|"medium"|"high"|null,
+  "cbd_level": "low"|"medium"|"high"|null,
   "is_follow_up": true|false,
-  "required_flavors": ["flavor1", "flavor2"] or null,
-  "required_effects": ["effect1", "effect2"] or null,
-  "required_helps_with": ["condition1", "condition2"] or null,
-  "exclude_negatives": ["negative1", "negative2"] or null,
-  "required_terpenes": ["terpene1", "terpene2"] or null,
-  "natural_response": "Response mentioning specific strains (answer based on previous strains if is_follow_up=true)",
-  "suggested_follow_ups": ["follow-up 1", "follow-up 2", "follow-up 3"],
+  "follow_up_intent": {{"action":"compare|filter|sort|select|describe","field":"thc|cbd|category"|null,"order":"asc|desc"|null,"filter_value":"string"|null,"strain_indices":[0,1]|null}} or null,
+  "required_flavors": ["flavor1"] or null,
+  "required_effects": ["effect1"] or null,
+  "required_helps_with": ["condition1"] or null,
+  "exclude_negatives": ["negative1"] or null,
+  "required_terpenes": ["terpene1"] or null,
+  "natural_response": "Response text (ignored if is_follow_up=true)",
+  "suggested_follow_ups": ["follow-up 1", "follow-up 2"],
   "confidence": 0.0-1.0
 }}
 
-EXAMPLES:
+EXAMPLES (6 key scenarios):
 
---- NON-SEARCH QUERIES (is_search_query = FALSE) ---
-
+1. NON-SEARCH (greeting/help):
 Query: "hey, how can you help me"
-{{
-  "is_search_query": false,
-  "specific_strain_name": null,
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "¡Hola! I'm your cannabis budtender. I can help you find the perfect strain based on your needs - whether you're looking for relaxation, energy, pain relief, or specific flavors. What would you like to know?",
-  "suggested_follow_ups": ["Show me relaxing strains", "I need something for sleep", "What's good for pain relief?"],
-  "confidence": 0.95
-}}
+{{"is_search_query": false, "is_follow_up": false, "natural_response": "I'm your cannabis budtender! I can help you find strains for relaxation, energy, pain relief, or specific flavors.", "suggested_follow_ups": ["Relaxing strains", "For sleep", "For pain"], "confidence": 0.95}}
 
-Query: "hola, ¿qué puedes hacer?"
-{{
-  "is_search_query": false,
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "¡Hola! Puedo ayudarte a encontrar la cepa perfecta según tus necesidades - ya sea relajación, energía, alivio del dolor, o sabores específicos. ¿Qué buscas?",
-  "suggested_follow_ups": ["Muéstrame cepas relajantes", "Necesito algo para dormir", "¿Qué es bueno para el dolor?"],
-  "confidence": 0.95
-}}
-
-Query: "thank you!"
-{{
-  "is_search_query": false,
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "You're welcome! Feel free to ask if you need anything else. I'm here to help you find the perfect strain!",
-  "suggested_follow_ups": ["Show me popular strains", "I need something energizing", "Help with anxiety"],
-  "confidence": 0.95
-}}
-
---- SEARCH QUERIES (is_search_query = TRUE) ---
-
-Query: "necesito algo para dormir mejor"
-{{
-  "is_search_query": true,
-  "detected_category": "Indica",
-  "thc_level": null,
-  "cbd_level": null,
-  "natural_response": "Te recomendaría Northern Lights, una indica clásica perfecta para dormir. Su alto contenido de THC y efectos relajantes te ayudarán a conciliar el sueño profundamente.",
-  "suggested_follow_ups": ["¿Prefieres algo con más CBD?", "¿Necesitas algo que no cause somnolencia matutina?", "¿Te interesan otras indicas similares?"],
-  "confidence": 0.95
-}}
-
-Query: "show me high THC strains"
-{{
-  "is_search_query": true,
-  "detected_category": null,
-  "thc_level": "high",
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "I found several high-THC strains for you. GMO Cookies (28% THC) and Kush Mints (28% THC) are excellent choices with potent effects.",
-  "suggested_follow_ups": ["Would you like sativa or indica?", "Any specific effects you're looking for?", "Do you prefer a particular flavor profile?"],
-  "confidence": 0.9
-}}
-
-Query: "suggest me sativa strains with low thc"
-{{
-  "detected_category": "Sativa",
-  "thc_level": "low",
-  "cbd_level": null,
-  "natural_response": "For a mild sativa, I recommend Harlequin (5% THC). It provides gentle energy and focus without overwhelming psychoactive effects, perfect for beginners.",
-  "suggested_follow_ups": ["Would you like higher CBD for medical benefits?", "Any specific effects you're looking for?", "Do you prefer citrus or earthy flavors?"],
-  "confidence": 0.95
-}}
-
-Query: "dame algo energético para trabajar"
-{{
-  "detected_category": "Sativa",
-  "thc_level": null,
-  "cbd_level": null,
-  "natural_response": "Para trabajar te recomiendo Green Crack, una sativa energizante que mejora el foco y la creatividad sin causar ansiedad. Perfecto para uso diurno productivo.",
-  "suggested_follow_ups": ["¿Prefieres algo con menos THC?", "¿Necesitas algo que también ayude con creatividad?", "¿Te interesan híbridos con efecto similar?"],
-  "confidence": 0.95
-}}
-
+2. SEARCH with medical use:
 Query: "which strains help with pain?"
-{{
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": ["pain"],
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "For pain relief, I recommend Blue Dream and ACDC. Blue Dream offers balanced effects with moderate THC, while ACDC is high in CBD for medical benefits without strong psychoactive effects.",
-  "suggested_follow_ups": ["Do you prefer indica or sativa?", "Would you like high-CBD options?", "Any specific type of pain?"],
-  "confidence": 0.9
-}}
+{{"is_search_query": true, "is_follow_up": false, "detected_category": null, "required_helps_with": ["pain"], "natural_response": "For pain relief, I recommend indica strains with high THC or CBD options like ACDC.", "suggested_follow_ups": ["Indica or sativa?", "High CBD options?"], "confidence": 0.9}}
 
+3. SEARCH with multiple filters:
 Query: "suggest me indica with tropical flavor and high thc"
-{{
-  "detected_category": "Indica",
-  "thc_level": "high",
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": ["tropical"],
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "I'll find you an indica with tropical flavors and high THC. Watermelon Zkittlez (24% THC) offers sweet tropical notes with strong relaxing effects, perfect for evening use.",
-  "suggested_follow_ups": ["Would you like something sweeter?", "Do you need help with sleep?", "Any specific effects you're looking for?"],
-  "confidence": 0.95
-}}
+{{"is_search_query": true, "is_follow_up": false, "detected_category": "Indica", "thc_level": "high", "required_flavors": ["tropical"], "natural_response": "I'll find you an indica with tropical flavors and high THC.", "suggested_follow_ups": ["Something sweeter?", "Help with sleep?"], "confidence": 0.95}}
 
---- SPECIFIC STRAIN QUERIES (return only 1 strain, not 5 similar) ---
+4. SPECIFIC STRAIN:
+Query: "tell me about Northern Lights"
+{{"is_search_query": true, "specific_strain_name": "Northern Lights", "is_follow_up": false, "natural_response": "Northern Lights is a classic indica with relaxing effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
 
-Query: "do you have info about Tropicana Cookies?"
-{{
-  "is_search_query": true,
-  "specific_strain_name": "Tropicana Cookies",
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "Tropicana Cookies is a sativa strain with 16% THC. It's known for energizing and creative effects with a tropical, citrus flavor profile - perfect for daytime use.",
-  "suggested_follow_ups": ["Would you like similar sativa strains?", "Any other strain you'd like to know about?", "Looking for something for a specific purpose?"],
-  "confidence": 0.95
-}}
+5. FOLLOW-UP (compare):
+Context: Recommended strains: Super Silver Haze (21% THC), Chocolope (22% THC)
+Query: "which has higher THC"
+{{"is_search_query": true, "is_follow_up": true, "follow_up_intent": {{"action": "compare", "field": "thc", "order": "desc"}}, "natural_response": "Follow-up processed", "suggested_follow_ups": ["Effects?", "CBD options?"], "confidence": 0.95}}
 
-Query: "cuéntame sobre ACDC"
-{{
-  "is_search_query": true,
-  "specific_strain_name": "ACDC",
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": false,
-  "required_flavors": null,
-  "required_effects": null,
-  "required_helps_with": null,
-  "exclude_negatives": null,
-  "required_terpenes": null,
-  "natural_response": "ACDC es una cepa híbrida con muy bajo THC (1%) y alto CBD (14%). Es ideal para beneficios medicinales sin efectos psicoactivos fuertes, excelente para dolor y estrés.",
-  "suggested_follow_ups": ["¿Quieres otras cepas con alto CBD?", "¿Buscas algo para alguna condición específica?", "¿Te interesan cepas similares?"],
-  "confidence": 0.95
-}}
-
---- FOLLOW-UP QUERY EXAMPLES (CRITICAL) ---
-
-Context: Previous strains shown: Animal Cookies (19% THC), Animal Mints (16% THC), GMO Cookies (28% THC)
-Query: "which one has less thc" (or "cual tiene menos thc")
-{{
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": true,
-  "natural_response": "Animal Mints has the lowest THC at 16%, followed by Animal Cookies at 19%.",
-  "suggested_follow_ups": ["Tell me about Animal Mints effects", "Do you have something even milder?", "Compare Animal Mints and Animal Cookies"],
-  "confidence": 0.95
-}}
-
-Context: Previous strains shown: G13 (Indica, 20% THC), Truffle (Hybrid, 24% THC), Kush Mints (Hybrid, 28% THC)
-Query: "and suggest me indica with tropical flavor and high thc"
-{{
-  "detected_category": "Indica",
-  "thc_level": "high",
-  "cbd_level": null,
-  "is_follow_up": false,
-  "natural_response": "Te recomiendo buscar indicas con sabores tropicales y alto THC. Aunque la combinación exacta puede ser rara, puedo buscar opciones similares.",
-  "suggested_follow_ups": ["¿Prefieres algo con sabor cítrico?", "¿Te interesan híbridos tropicales?", "¿Qué nivel de THC buscas exactamente?"],
-  "confidence": 0.85
-}}
-
-Context: Previous strains shown: Blue Dream (18% THC), ACDC (1% THC), Northern Lights (21% THC)
-Query: "cual es el más potente" (or "which is the strongest")
-{{
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": true,
-  "natural_response": "De esos, Northern Lights es el más potente con 21% de THC.",
-  "suggested_follow_ups": ["¿Cuáles son los efectos?", "¿Necesitas algo más fuerte?", "¿Comparar con Blue Dream?"],
-  "confidence": 0.95
-}}
-
-Context: Previous strains shown: Green Crack (Sativa), Blue Dream (Hybrid), Durban Poison (Sativa)
-Query: "show me only the hybrids from that list" (or "solo los híbridos de esa lista")
-{{
-  "detected_category": null,
-  "thc_level": null,
-  "cbd_level": null,
-  "is_follow_up": true,
-  "natural_response": "From the previous list, only Blue Dream is a hybrid. It offers balanced effects between relaxation and energy.",
-  "suggested_follow_ups": ["Would you like more hybrid options?", "Tell me about Blue Dream effects", "Show me similar hybrids"],
-  "confidence": 0.95
-}}
+6. NOT FOLLOW-UP (new criteria):
+Context: Recommended strains: G13 (Indica), Truffle (Hybrid)
+Query: "now show me sativa strains for energy"
+{{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "detected_category": "Sativa", "required_effects": ["energetic"], "natural_response": "I'll find you energetic sativa strains.", "suggested_follow_ups": ["THC level?", "Flavor?"], "confidence": 0.95}}
 """
 
         # Merge DB context with user context for formatting
@@ -711,10 +606,41 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
                 if specific_strain_name.lower() in ["null", "", "none"]:
                     specific_strain_name = None
 
-            # Нормализация follow-up (simple)
+            # Нормализация follow-up
             is_follow_up = raw_result.get("is_follow_up", False)
             if isinstance(is_follow_up, str):
                 is_follow_up = is_follow_up.lower() in ["true", "yes", "1"]
+
+            # Parse follow_up_intent (NEW)
+            follow_up_intent = None
+            raw_intent = raw_result.get("follow_up_intent")
+            if raw_intent and isinstance(raw_intent, dict) and is_follow_up:
+                try:
+                    # Normalize action
+                    action = raw_intent.get("action", "describe")
+                    if action not in ["compare", "filter", "sort", "select", "describe"]:
+                        action = "describe"
+
+                    # Normalize field
+                    field = raw_intent.get("field")
+                    if field and field not in ["thc", "cbd", "cbg", "category"]:
+                        field = "thc"  # Default to THC
+
+                    # Normalize order
+                    order = raw_intent.get("order")
+                    if order and order not in ["asc", "desc"]:
+                        order = "desc"  # Default to highest
+
+                    follow_up_intent = FollowUpIntent(
+                        action=action,
+                        field=field,
+                        order=order,
+                        filter_value=raw_intent.get("filter_value"),
+                        strain_indices=raw_intent.get("strain_indices")
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to parse follow_up_intent: {e}")
+                    follow_up_intent = None
 
             # Извлечение атрибутов для post-filtering (as written by user)
             required_flavors = raw_result.get("required_flavors")
@@ -747,6 +673,7 @@ Query: "show me only the hybrids from that list" (or "solo los híbridos de esa 
                 is_search_query=is_search_query,
                 specific_strain_name=specific_strain_name,
                 is_follow_up=is_follow_up,
+                follow_up_intent=follow_up_intent,
                 required_flavors=required_flavors,
                 required_effects=required_effects,
                 required_helps_with=required_helps_with,
