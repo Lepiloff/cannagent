@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Request
 from datetime import datetime
 from app.db.database import check_db_connection
@@ -14,7 +16,8 @@ async def health_check(request: Request):
     """
     Health check endpoint
     """
-    db_status = "ok" if check_db_connection() else "error"
+    db_ok = await asyncio.to_thread(check_db_connection)
+    db_status = "ok" if db_ok else "error"
     
     # Check Redis cache status
     cache_stats = await cache_service.get_stats()

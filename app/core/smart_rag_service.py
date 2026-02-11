@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any
 from app.models.session import ConversationSession
 from app.models.schemas import (
@@ -44,9 +46,21 @@ class SmartRAGService:
     - Context-aware session management
     """
 
-    def __init__(self, repository: StrainRepository):
+    def __init__(self, repository: Optional[StrainRepository] = None):
         self.repository = repository
         self.session_manager = get_session_manager()
+
+        # When repository is None this instance is used only as an async
+        # entry-point (aprocess_contextual_query).  The real DB-bound instance
+        # is created inside _init_db on the dedicated DB thread.
+        if repository is None:
+            self.llm_interface = None
+            self.streamlined_analyzer = None
+            self.fuzzy_matcher = None
+            self.vector_search = None
+            self.filter_factory = None
+            self.follow_up_executor = None
+            return
 
         # Initialize Streamlined RAG v4.0 components
         self.llm_interface = get_llm()
@@ -95,11 +109,331 @@ class SmartRAGService:
 
         logger.info(f"Processing query: {query[:50]}...")
 
-        # Get or create session
-        session = self.session_manager.get_or_restore_session(session_id)
+        # Distributed lock prevents race conditions on concurrent same-session requests
+        with self.session_manager.session_lock(session_id):
+            # Get or create session
+            session = self.session_manager.get_or_restore_session(session_id)
 
-        # Process with Streamlined RAG v4.0
-        return self._streamlined_process_query(query, session, language)
+            # Process with Streamlined RAG v4.0
+            return self._streamlined_process_query(query, session, language)
+
+    async def aprocess_contextual_query(
+        self,
+        query: str,
+        session_id: Optional[str] = None,
+        language: Optional[str] = None,
+        history: Optional[List[str]] = None,
+        source_platform: Optional[str] = None
+    ) -> ChatResponse:
+        """
+        Async entry point for query processing.
+
+        Granular async pipeline:
+        - LLM calls run as native async (no thread needed)
+        - DB calls run in a dedicated single-thread executor (thread safety)
+        - Redis session ops run as native async
+        """
+        logger.info(f"Async processing query: {query[:50]}...")
+
+        async with self.session_manager.async_session_lock(session_id):
+            # Async session management (native async Redis)
+            session = await self.session_manager.aget_or_restore_session(session_id)
+
+            loop = asyncio.get_event_loop()
+            db_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="db-req")
+            db_ref = [None]
+
+            def _init_db():
+                from app.db.database import SessionLocal
+                db = SessionLocal()
+                db_ref[0] = db
+                repo = StrainRepository(db)
+                return SmartRAGService(repo)
+
+            db_svc = await loop.run_in_executor(db_executor, _init_db)
+
+            try:
+                return await self._async_streamlined_process_query(
+                    query, session, language, db_svc, db_executor
+                )
+            finally:
+                if db_ref[0]:
+                    await loop.run_in_executor(db_executor, db_ref[0].close)
+                db_executor.shutdown(wait=False)
+
+    async def _async_streamlined_process_query(
+        self,
+        query: str,
+        session: ConversationSession,
+        explicit_language: Optional[str],
+        db_svc: 'SmartRAGService',
+        db_executor: ThreadPoolExecutor,
+    ) -> ChatResponse:
+        """
+        Async version of _streamlined_process_query.
+
+        Same branching logic, but:
+        - LLM calls are native async (aanalyze_query, agenerate_response_only, agenerate_embedding)
+        - DB calls go through run_in_executor(db_executor) for thread safety
+        - Session save is native async Redis
+        """
+        loop = asyncio.get_event_loop()
+
+        def run_db(fn, *args):
+            return loop.run_in_executor(db_executor, fn, *args)
+
+        logger.info(f"🚀 Async Streamlined RAG v4.0: Processing query '{query[:50]}...'")
+
+        # --- Setup (CPU only) ---
+        detected_language = db_svc._determine_language(explicit_language, session)
+        logger.info(f"Language determined: {detected_language} (explicit: {explicit_language}, session: {session.detected_language})")
+
+        session_context = db_svc._build_session_context(session)
+
+        # DB: get session strains for context
+        session_strains = await run_db(db_svc._get_session_strains, session)
+
+        # Build analysis context (CPU)
+        analysis_context = session_context.copy()
+        if session_strains:
+            analysis_context['recommended_strains'] = [
+                f"{s.name} ({s.category}, THC: {s.thc}%)"
+                for s in session_strains[:5]
+            ]
+        else:
+            analysis_context['recommended_strains'] = []
+
+        logger.info(f"Context for LLM: strains={len(session_strains)}, recommended_strains={analysis_context['recommended_strains']}")
+
+        # --- ASYNC LLM: Analysis (~1-2s, no thread) ---
+        try:
+            analysis = await db_svc.streamlined_analyzer.aanalyze_query(
+                user_query=query,
+                session_context=analysis_context,
+                found_strains=None,
+                explicit_language=detected_language
+            )
+            logger.info(f"Analysis: category={analysis.detected_category}, is_follow_up={analysis.is_follow_up}, language={analysis.detected_language}")
+        except Exception as e:
+            logger.error(f"Async streamlined analysis failed: {e}", exc_info=True)
+            analysis = QueryAnalysis(
+                detected_category=None,
+                thc_level=None,
+                cbd_level=None,
+                is_search_query=True,
+                is_follow_up=False,
+                natural_response="I can help you find the right strain.",
+                suggested_follow_ups=[],
+                detected_language=detected_language,
+                confidence=0.5
+            )
+
+        # --- Branch: non-search ---
+        if not analysis.is_search_query:
+            logger.info("❌ Non-search query detected - returning text-only response")
+            db_svc._update_session_streamlined(session, query, analysis, [])
+            await self.session_manager.asave_session_with_backup(session)
+            return await run_db(
+                db_svc._build_streamlined_response,
+                analysis, [], session,
+                {"is_search_query": False, "reason": "greeting_or_general_question"}
+            )
+
+        # --- Branch: follow-up (deterministic, CPU + DB for response building) ---
+        if analysis.is_follow_up and session_strains:
+            logger.info("🔄 Follow-up query detected - using deterministic executor")
+            intent = analysis.follow_up_intent
+            if not intent:
+                logger.info("No follow_up_intent from LLM, using keyword detection")
+                intent = detect_follow_up_intent_keywords(query)
+
+            result_strains, deterministic_response = db_svc.follow_up_executor.execute(
+                intent=intent,
+                session_strains=session_strains,
+                language=analysis.detected_language
+            )
+            analysis.natural_response = deterministic_response
+            db_svc._update_session_streamlined(session, query, analysis, result_strains)
+            await self.session_manager.asave_session_with_backup(session)
+            return await run_db(
+                db_svc._build_streamlined_response,
+                analysis, result_strains, session,
+                {"is_follow_up": True, "deterministic_executor": True}
+            )
+
+        # --- Branch: specific strain (DB + async embedding fallback) ---
+        if analysis.specific_strain_name:
+            logger.info(f"🎯 Specific strain query detected: '{analysis.specific_strain_name}'")
+
+            def _find_specific_strain():
+                specific_strain = db_svc.repository.db.query(StrainModel).filter(
+                    StrainModel.name.ilike(analysis.specific_strain_name),
+                    StrainModel.active == True
+                ).first()
+                if specific_strain:
+                    logger.info(f"✅ Found specific strain: {specific_strain.name}")
+                    return [specific_strain], False
+                else:
+                    logger.warning(f"❌ Specific strain '{analysis.specific_strain_name}' not found - searching closest match")
+                    all_strains = db_svc.repository.db.query(StrainModel).filter(
+                        StrainModel.active == True
+                    ).all()
+                    return all_strains, True  # need vector search fallback
+
+            found_strains, needs_vector_search = await run_db(_find_specific_strain)
+
+            if needs_vector_search and found_strains:
+                # Async embedding (no thread) + DB distance calc (thread)
+                query_emb = await db_svc.vector_search.llm.agenerate_embedding(analysis.specific_strain_name)
+                result_strains = await run_db(
+                    db_svc.vector_search._search_with_embedding,
+                    query_emb, found_strains, analysis.detected_language, 1
+                )
+            else:
+                result_strains = found_strains
+            db_svc._update_session_streamlined(session, query, analysis, result_strains)
+            await self.session_manager.asave_session_with_backup(session)
+            return await run_db(
+                db_svc._build_streamlined_response,
+                analysis, result_strains, session,
+                {"specific_strain_query": True, "strain_name": analysis.specific_strain_name}
+            )
+
+        # --- Main search path ---
+
+        # DB: Build filters + apply + attribute filtering
+        def _db_filter_phase():
+            filter_params = {'is_search_query': True}
+
+            if analysis.detected_category:
+                filter_params['category'] = analysis.detected_category
+
+            if analysis.thc_level == "low":
+                filter_params['max_thc'] = 10
+            elif analysis.thc_level == "medium":
+                filter_params['min_thc'] = 10
+                filter_params['max_thc'] = 20
+            elif analysis.thc_level == "high":
+                filter_params['min_thc'] = 20
+
+            if analysis.cbd_level == "low":
+                filter_params['max_cbd'] = 3
+            elif analysis.cbd_level == "medium":
+                filter_params['min_cbd'] = 3
+                filter_params['max_cbd'] = 10
+            elif analysis.cbd_level == "high":
+                filter_params['min_cbd'] = 7
+
+            filter_chain = db_svc.filter_factory.create_from_params(filter_params)
+            logger.info(f"Filters: {filter_chain.get_filter_names()}")
+
+            base_query = db_svc.repository.db.query(StrainModel)
+            filtered_query = filter_chain.apply(base_query)
+            candidates = filtered_query.all()
+
+            logger.info(f"SQL filtering (category/THC/CBD): {len(candidates)} candidates")
+
+            if candidates and (analysis.required_flavors or analysis.required_effects or
+                              analysis.required_helps_with or analysis.exclude_negatives or
+                              analysis.required_terpenes):
+                original_count = len(candidates)
+                candidates = db_svc._apply_attribute_filters(candidates, analysis, filter_params)
+                logger.info(f"After attribute filtering: {len(candidates)} candidates (was {original_count})")
+
+                if not candidates:
+                    logger.warning("Attribute filters too strict - falling back to category/THC/CBD results")
+                    candidates = filtered_query.all()
+                    filter_params['attribute_fallback'] = True
+
+            return candidates, filter_params
+
+        candidates, filter_params = await run_db(_db_filter_phase)
+
+        # Handle no-candidates fallback (DB)
+        fallback_used = False
+        if not candidates:
+            fallback_used = True
+
+            def _fallback_candidates():
+                nonlocal candidates
+                if analysis.thc_level or analysis.cbd_level:
+                    logger.warning("No candidates with THC/CBD filters, retrying with category only")
+                    fallback_params = {}
+                    if analysis.detected_category:
+                        fallback_params['category'] = analysis.detected_category
+                    fallback_chain = db_svc.filter_factory.create_from_params(fallback_params)
+                    base_q = db_svc.repository.db.query(StrainModel)
+                    fb_candidates = fallback_chain.apply(base_q).all()
+                    logger.info(f"Fallback filtering (category only): {len(fb_candidates)} candidates")
+                    if fb_candidates:
+                        return fb_candidates
+
+                logger.warning("No candidates even with category only, using all active strains")
+                return db_svc.repository.db.query(StrainModel).filter(
+                    StrainModel.active == True
+                ).all()
+
+            candidates = await run_db(_fallback_candidates)
+
+        # ASYNC: Vector search — async embedding + DB distance calculation
+        if candidates:
+            try:
+                # Async LLM embedding (no thread needed)
+                query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
+                if not query_embedding or len(query_embedding) == 0:
+                    raise ValueError("Empty embedding received from LLM")
+                # DB: batch cosine distance (in dedicated thread)
+                result_strains = await run_db(
+                    db_svc.vector_search._search_with_embedding,
+                    query_embedding, candidates, analysis.detected_language, 5
+                )
+                logger.info(f"Vector search: {len(result_strains)} results")
+            except Exception as e:
+                logger.error(f"Async vector search failed: {e}", exc_info=True)
+                result_strains = candidates[:5]
+        else:
+            result_strains = []
+
+        # ASYNC LLM: Response generation (~0.5-1s, no thread)
+        if result_strains:
+            try:
+                strain_info = [
+                    {
+                        'name': s.name,
+                        'category': s.category,
+                        'thc': str(s.thc) if s.thc else 'N/A'
+                    }
+                    for s in result_strains[:5]
+                ]
+                improved_response = await db_svc.streamlined_analyzer.agenerate_response_only(
+                    query=query,
+                    strains=strain_info,
+                    language=detected_language
+                )
+                analysis.natural_response = improved_response
+            except Exception as e:
+                logger.warning(f"Async mini-prompt re-analysis failed: {e}")
+
+        # Fallback notice
+        if fallback_used and result_strains:
+            if analysis.detected_language == 'es':
+                notice = "ℹ️ No encontré coincidencias exactas. Aquí están las opciones más cercanas:\n\n"
+            else:
+                notice = "ℹ️ No exact matches found. Here are the closest options:\n\n"
+            analysis.natural_response = notice + analysis.natural_response
+
+        # Update session (CPU)
+        db_svc._update_session_streamlined(session, query, analysis, result_strains)
+
+        # ASYNC: Session save (Redis)
+        await self.session_manager.asave_session_with_backup(session)
+
+        # DB: Build response (needs DB for lazy-loaded relationships)
+        return await run_db(
+            db_svc._build_streamlined_response,
+            analysis, result_strains, session, filter_params
+        )
+
     def _streamlined_process_query(
         self,
         query: str,

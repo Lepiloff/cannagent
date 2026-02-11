@@ -148,4 +148,26 @@ def get_redis() -> redis.Redis:
         port=int(os.getenv('REDIS_PORT', '6379')),
         db=int(os.getenv('REDIS_DB', '0')),
         decode_responses=True  # Автоматически декодировать ответы как строки
-    ) 
+    )
+
+
+# ---------- Async Redis client (redis>=4.2 includes redis.asyncio) ----------
+
+_async_redis_pool = None
+
+
+async def get_async_redis():
+    """Get async Redis client for session management"""
+    global _async_redis_pool
+    if _async_redis_pool is None:
+        try:
+            import redis.asyncio as aioredis
+            _async_redis_pool = aioredis.Redis(
+                host=os.getenv('REDIS_HOST', 'redis'),
+                port=int(os.getenv('REDIS_PORT', '6379')),
+                db=int(os.getenv('REDIS_DB', '0')),
+                decode_responses=True,
+            )
+        except ImportError:
+            raise RuntimeError("redis.asyncio is not available (requires redis>=4.2)")
+    return _async_redis_pool

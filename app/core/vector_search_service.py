@@ -12,12 +12,14 @@ Performance:
 - NEW: 1 batch query = 20-50ms (8-20x faster)
 """
 
+import asyncio
+import logging
 from typing import List, Optional, Dict, Any
+
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.models.database import Strain as StrainModel
 from app.core.llm_interface import LLMInterface
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -75,20 +77,62 @@ class VectorSearchService:
             # Step 1: Generate query embedding once
             query_embedding = self._generate_query_embedding(query, language)
 
-            # Step 2: Batch query for all cosine distances (SINGLE SQL QUERY)
-            ranked_strains = self._batch_calculate_distances(
-                query_embedding,
-                candidates,
-                language,
-                limit
-            )
-
-            logger.info(f"Vector search completed: found {len(ranked_strains)} strains")
-            return ranked_strains
+            # Step 2: Rank by similarity using the embedding
+            return self._search_with_embedding(query_embedding, candidates, language, limit)
 
         except Exception as e:
             logger.error(f"Vector search failed: {e}", exc_info=True)
             return self._fallback_search(candidates, limit)
+
+    async def asearch(
+        self,
+        query: str,
+        candidates: List[StrainModel],
+        language: str = 'es',
+        limit: int = 5
+    ) -> List[StrainModel]:
+        """
+        Async version of search: uses native async embedding generation,
+        then offloads sync DB queries to thread pool.
+        """
+        if not candidates:
+            logger.warning("No candidate strains provided for vector search")
+            return []
+
+        logger.info(f"Async vector search: query='{query[:50]}...', candidates={len(candidates)}, language={language}")
+
+        try:
+            # Step 1: Async embedding via LangChain aembed_query
+            query_embedding = await self.llm.agenerate_embedding(query)
+            if not query_embedding or len(query_embedding) == 0:
+                raise ValueError("Empty embedding received from LLM")
+
+            # Step 2: DB queries in thread pool (sync SQLAlchemy)
+            return await asyncio.to_thread(
+                self._search_with_embedding, query_embedding, candidates, language, limit
+            )
+
+        except Exception as e:
+            logger.error(f"Async vector search failed: {e}", exc_info=True)
+            return self._fallback_search(candidates, limit)
+
+    def _search_with_embedding(
+        self,
+        query_embedding: List[float],
+        candidates: List[StrainModel],
+        language: str,
+        limit: int
+    ) -> List[StrainModel]:
+        """
+        Rank candidates by similarity using a pre-computed embedding.
+
+        Shared by both sync search() and async asearch().
+        """
+        ranked_strains = self._batch_calculate_distances(
+            query_embedding, candidates, language, limit
+        )
+        logger.info(f"Vector search completed: found {len(ranked_strains)} strains")
+        return ranked_strains
 
     def _generate_query_embedding(self, query: str, language: str) -> List[float]:
         """
