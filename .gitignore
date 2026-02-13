@@ -159,3 +159,6 @@ test.db
 Thumbs.db
 *.swp
 *.swo
+
+# Private documentation
+*.md
