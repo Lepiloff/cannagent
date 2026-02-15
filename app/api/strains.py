@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
+import asyncio
+import os
+
+from fastapi import APIRouter, HTTPException, Request
 from typing import List
-from app.db.database import get_db
+from app.db.database import SessionLocal
 from app.db.repository import StrainRepository
 from app.models.schemas import Strain
 from app.core.rate_limiter import PRODUCTS_RATE_LIMIT, limiter
-import os
 
 router = APIRouter()
 
@@ -16,14 +17,20 @@ async def get_strains(
     request: Request,
     skip: int = 0,
     limit: int = 20,
-    db: Session = Depends(get_db)
 ):
     """
     Get list of available strains
     """
     try:
-        repository = StrainRepository(db)
-        strains = repository.get_strains(skip=skip, limit=limit)
+        def _fetch():
+            db = SessionLocal()
+            try:
+                repository = StrainRepository(db)
+                return repository.get_strains(skip=skip, limit=limit)
+            finally:
+                db.close()
+
+        strains = await asyncio.to_thread(_fetch)
         
         # Convert to response format with URLs
         result = []
@@ -69,14 +76,20 @@ async def get_strains(
 async def get_strain(
     request: Request,
     strain_id: int,
-    db: Session = Depends(get_db)
 ):
     """
     Get specific strain by ID
     """
     try:
-        repository = StrainRepository(db)
-        strain = repository.get_strain(strain_id)
+        def _fetch():
+            db = SessionLocal()
+            try:
+                repository = StrainRepository(db)
+                return repository.get_strain(strain_id)
+            finally:
+                db.close()
+
+        strain = await asyncio.to_thread(_fetch)
         
         if not strain:
             raise HTTPException(status_code=404, detail="Strain not found")

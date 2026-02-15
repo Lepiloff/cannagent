@@ -9,11 +9,13 @@ Streamlined Query Analyzer - Упрощённая версия для векто
 Векторный поиск - ОСНОВНОЙ метод поиска. SQL только для категории.
 """
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING, Literal
-from pydantic import BaseModel, Field, validator
-from app.core.llm_interface import LLMInterface
+import asyncio
 import json
 import logging
+from typing import Optional, Dict, Any, List, TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, Field, validator
+from app.core.llm_interface import LLMInterface
 
 if TYPE_CHECKING:
     from app.core.context_builder import ContextBuilder
@@ -170,6 +172,46 @@ Response:"""
                 return f"I recommend {first}. It's a great option for you."
             return "I found some great options for you!"
 
+    async def agenerate_response_only(
+        self,
+        query: str,
+        strains: List[Dict[str, Any]],
+        language: str = "en"
+    ) -> str:
+        """Async version of generate_response_only: uses native async LLM call."""
+        strain_info = ", ".join([
+            f"{s.get('name', '?')} ({s.get('category', '?')}, {s.get('thc', '?')}% THC)"
+            for s in strains[:5]
+        ])
+
+        if language == "es":
+            prompt = f"""Eres un budtender experto. Genera una respuesta breve.
+Consulta: "{query}"
+Cepas: {strain_info}
+Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre.
+Respuesta:"""
+        else:
+            prompt = f"""You are an expert cannabis budtender. Generate a helpful response.
+Query: "{query}"
+Strains: {strain_info}
+Write 2-3 sentences recommending these strains. Mention 1-2 by name.
+Response:"""
+
+        try:
+            response = await self.llm.agenerate_response(prompt)
+            response = response.strip()
+            if response.startswith('"') and response.endswith('"'):
+                response = response[1:-1]
+            return response
+        except Exception as e:
+            logger.warning(f"Async mini-prompt failed: {e}")
+            if strains:
+                first = strains[0].get('name', 'this strain')
+                if language == "es":
+                    return f"Te recomiendo {first}. Es una excelente opción."
+                return f"I recommend {first}. It's a great option for you."
+            return "I found some great options for you!"
+
     def analyze_query(
         self,
         user_query: str,
@@ -212,6 +254,37 @@ Response:"""
 
         except Exception as e:
             logger.error(f"Analysis failed: {e}", exc_info=True)
+            return self._fallback_analysis(user_query, explicit_language)
+
+    async def aanalyze_query(
+        self,
+        user_query: str,
+        session_context: Optional[Dict[str, Any]] = None,
+        found_strains: Optional[List[Dict[str, Any]]] = None,
+        fallback_used: bool = False,
+        explicit_language: Optional[str] = None
+    ) -> QueryAnalysis:
+        """Async version of analyze_query: uses native async LLM call."""
+        logger.info(f"Async streamlined analysis for query: {user_query[:50]}... (language={explicit_language})")
+
+        try:
+            # Build context (sync — pure computation, no I/O)
+            context = self._build_context(
+                user_query, session_context, found_strains,
+                fallback_used, explicit_language=explicit_language
+            )
+
+            # Async LLM analysis
+            raw_result = await self._aanalyze_with_llm(context, explicit_language)
+
+            # Parse result (sync — pure computation)
+            analysis = self._parse_result(raw_result, user_query, explicit_language)
+
+            logger.info(f"Async analysis completed: category={analysis.detected_category}, language={analysis.detected_language}")
+            return analysis
+
+        except Exception as e:
+            logger.error(f"Async analysis failed: {e}", exc_info=True)
             return self._fallback_analysis(user_query, explicit_language)
 
     def _build_context(
@@ -298,7 +371,29 @@ Response:"""
             logger.debug("ContextBuilder not available - using hardcoded taxonomy")
             db_context_section = self._build_fallback_db_context()
 
-        prompt = """You are an expert cannabis budtender AI assistant.
+        prompt = self._get_analysis_prompt_template()
+
+        # Merge DB context with user context for formatting
+        format_context = {**context, "db_context": db_context_section}
+        formatted_prompt = prompt.format(**format_context)
+
+        # Получение JSON ответа от LLM
+        try:
+            if hasattr(self.llm, 'extract_json'):
+                result = self.llm.extract_json(formatted_prompt)
+            else:
+                response = self.llm.generate_response(formatted_prompt)
+                result = self._extract_json_from_response(response)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"LLM call failed: {e}")
+            raise
+
+    def _get_analysis_prompt_template(self) -> str:
+        """Returns the analysis prompt template shared by sync and async LLM calls."""
+        return """You are an expert cannabis budtender AI assistant.
 
 {db_context}
 
@@ -527,22 +622,43 @@ Query: "now show me sativa strains for energy"
 {{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "detected_category": "Sativa", "required_effects": ["energetic"], "natural_response": "I'll find you energetic sativa strains.", "suggested_follow_ups": ["THC level?", "Flavor?"], "confidence": 0.95}}
 """
 
-        # Merge DB context with user context for formatting
+    async def _aanalyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
+        """Async version of _analyze_with_llm: reuses the same prompt, async LLM call."""
+
+        # Build the prompt identically to _analyze_with_llm
+        target_language = explicit_language or context.get("target_language", "es")
+
+        db_context_section = ""
+        if self.context_builder:
+            try:
+                llm_context = self.context_builder.build_llm_context(
+                    user_query=context["user_query"],
+                    language=target_language,
+                    session_context=None,
+                    found_strains=None,
+                    fallback_used=bool(context.get("fallback_note"))
+                )
+                db_context_section = self.context_builder.build_prompt_section(llm_context)
+            except Exception as e:
+                logger.warning(f"Failed to build DB context: {e}. Using fallback.")
+                db_context_section = self._build_fallback_db_context()
+        else:
+            db_context_section = self._build_fallback_db_context()
+
+        # Use the same prompt template as _analyze_with_llm
+        # (extracted via the same format_context approach)
         format_context = {**context, "db_context": db_context_section}
-        formatted_prompt = prompt.format(**format_context)
+        formatted_prompt = self._get_analysis_prompt_template().format(**format_context)
 
-        # Получение JSON ответа от LLM
         try:
-            if hasattr(self.llm, 'extract_json'):
-                result = self.llm.extract_json(formatted_prompt)
+            if hasattr(self.llm, 'aextract_json'):
+                result = await self.llm.aextract_json(formatted_prompt)
             else:
-                response = self.llm.generate_response(formatted_prompt)
+                response = await self.llm.agenerate_response(formatted_prompt)
                 result = self._extract_json_from_response(response)
-
             return result
-
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+            logger.error(f"Async LLM call failed: {e}")
             raise
 
     def _extract_json_from_response(self, response: str) -> Dict[str, Any]:
