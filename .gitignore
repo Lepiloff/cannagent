@@ -162,3 +162,5 @@ Thumbs.db
 
 # Private documentation
 *.md
+
+.claude/
