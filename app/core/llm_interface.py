@@ -1,3 +1,4 @@
+import asyncio
 import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
@@ -5,16 +6,24 @@ from typing import List, Optional
 
 class LLMInterface(ABC):
     """Абстрактный интерфейс для LLM провайдеров"""
-    
+
     @abstractmethod
     def generate_embedding(self, text: str) -> List[float]:
         """Генерация эмбеддинга для текста"""
         pass
-    
+
     @abstractmethod
     def generate_response(self, prompt: str) -> str:
         """Генерация ответа на промпт"""
         pass
+
+    async def agenerate_embedding(self, text: str) -> List[float]:
+        """Async генерация эмбеддинга. По умолчанию делегирует sync-версии через thread pool."""
+        return await asyncio.to_thread(self.generate_embedding, text)
+
+    async def agenerate_response(self, prompt: str) -> str:
+        """Async генерация ответа. По умолчанию делегирует sync-версии через thread pool."""
+        return await asyncio.to_thread(self.generate_response, prompt)
 
 
 class OpenAILLM(LLMInterface):
@@ -47,10 +56,19 @@ class OpenAILLM(LLMInterface):
     def generate_embedding(self, text: str) -> List[float]:
         """Генерация эмбеддинга через OpenAI"""
         return self.embeddings.embed_query(text)
-    
+
     def generate_response(self, prompt: str) -> str:
         """Генерация ответа через OpenAI"""
         response = self.chat_model.invoke(prompt)
+        return response.content
+
+    async def agenerate_embedding(self, text: str) -> List[float]:
+        """Async генерация эмбеддинга через LangChain ainvoke"""
+        return await self.embeddings.aembed_query(text)
+
+    async def agenerate_response(self, prompt: str) -> str:
+        """Async генерация ответа через LangChain ainvoke"""
+        response = await self.chat_model.ainvoke(prompt)
         return response.content
 
 

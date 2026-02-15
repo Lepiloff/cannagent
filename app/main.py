@@ -8,7 +8,6 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.db.database import SessionLocal
 from app.api import chat, health, strains
-from app.utils.data_import import initialize_sample_data
 from app.core.logging import setup_logging
 from app.core.metrics import MetricsMiddleware, get_metrics
 from app.core.rate_limiter import rate_limit_handler
@@ -24,9 +23,6 @@ async def lifespan(app: FastAPI):
     """Application lifespan event handler"""
     # Startup
     logger.info("🚀 Starting AI Budtender application...")
-
-    # Database schema is managed via Alembic migrations (run in deploy)
-    # initialize_sample_data()  # Disabled - using real data from cannamente
 
     # Initialize DB-Aware Taxonomy System
     try:

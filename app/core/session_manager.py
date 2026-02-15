@@ -1,13 +1,22 @@
 import json
+import logging
 import uuid
+from contextlib import contextmanager, asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
-import logging
 
 from app.models.session import ConversationSession
-from app.core.cache import get_redis
+from app.core.cache import get_redis, get_async_redis
 
 logger = logging.getLogger(__name__)
+
+
+class SessionLockTimeout(Exception):
+    """Raised when the distributed session lock cannot be acquired in time."""
+
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        super().__init__(f"Could not acquire session lock for {session_id} within timeout")
 
 
 class ImprovedSessionManager:
@@ -131,73 +140,145 @@ class ImprovedSessionManager:
             logger.error(f"Error saving session {session.session_id}: {e}")
             raise
     
-    def delete_session(self, session_id: str):
-        """Удаление сессии и её backup"""
-        
+    # ---------- Distributed locks for session race condition protection ----------
+
+    @contextmanager
+    def session_lock(self, session_id: Optional[str]):
+        """Sync distributed lock for session read-modify-write protection.
+
+        Raises ``SessionLockTimeout`` if the lock cannot be acquired within
+        ``blocking_timeout`` seconds, guaranteeing serialized access.
+        """
+        if not session_id:
+            yield
+            return
+
+        lock = self.redis.lock(
+            f"lock:session:{session_id}",
+            timeout=30,
+            blocking_timeout=10,
+        )
+        acquired = lock.acquire(blocking=True)
+        if not acquired:
+            logger.error(f"Session lock timeout for {session_id}")
+            raise SessionLockTimeout(session_id)
         try:
-            session_key = f"session:{session_id}"
-            backup_key = f"backup:{session_id}"
-            
-            # Удаляем основную сессию и backup
-            pipeline = self.redis.pipeline()
-            pipeline.delete(session_key)
-            pipeline.delete(backup_key)
-            pipeline.execute()
-            
-            logger.info(f"Session deleted: {session_id}")
-            
-        except Exception as e:
-            logger.error(f"Error deleting session {session_id}: {e}")
-    
-    def extend_session_ttl(self, session_id: str):
-        """Продление TTL активной сессии"""
-        
+            yield
+        finally:
+            try:
+                lock.release()
+            except Exception as e:
+                logger.warning(f"Error releasing session lock for {session_id}: {e}")
+
+    @asynccontextmanager
+    async def async_session_lock(self, session_id: Optional[str]):
+        """Async distributed lock for session read-modify-write protection.
+
+        Raises ``SessionLockTimeout`` if the lock cannot be acquired within
+        ``blocking_timeout`` seconds, guaranteeing serialized access.
+        """
+        if not session_id:
+            yield
+            return
+
+        r = await get_async_redis()
+        lock = r.lock(
+            f"lock:session:{session_id}",
+            timeout=30,
+            blocking_timeout=10,
+        )
+        acquired = await lock.acquire(blocking=True)
+        if not acquired:
+            logger.error(f"Async session lock timeout for {session_id}")
+            raise SessionLockTimeout(session_id)
         try:
-            session_key = f"session:{session_id}"
-            self.redis.expire(session_key, self.session_ttl)
-            logger.debug(f"Extended TTL for session: {session_id}")
-            
-        except Exception as e:
-            logger.error(f"Error extending TTL for {session_id}: {e}")
-    
-    def get_session_stats(self) -> dict:
-        """Получение статистики сессий для мониторинга"""
-        
+            yield
+        finally:
+            try:
+                await lock.release()
+            except Exception as e:
+                logger.warning(f"Error releasing async session lock for {session_id}: {e}")
+
+    # ---------- Async methods (use redis.asyncio) ----------
+
+    async def aget_or_restore_session(self, session_id: Optional[str]) -> ConversationSession:
+        """Async version of get_or_restore_session"""
+        if not session_id:
+            logger.info("No session_id provided, creating new session")
+            return self.create_new_session()
+
+        session = await self.aget_active_session(session_id)
+        if session:
+            logger.info(f"Retrieved active session (async): {session_id}")
+            return session
+
+        logger.info(f"Session {session_id} not active, attempting async restoration")
+        return await self.arestore_expired_session(session_id)
+
+    async def aget_active_session(self, session_id: str) -> Optional[ConversationSession]:
+        """Async version of get_active_session"""
         try:
-            # Подсчет активных сессий
-            active_sessions = len(self.redis.keys("session:*"))
-            backup_sessions = len(self.redis.keys("backup:*"))
-            
-            return {
-                "active_sessions": active_sessions,
-                "backup_sessions": backup_sessions,
-                "session_ttl_hours": self.session_ttl / 3600,
-                "backup_ttl_days": self.backup_ttl / 86400
-            }
-            
+            r = await get_async_redis()
+            session_data = await r.get(f"session:{session_id}")
+            if session_data:
+                session = ConversationSession.from_json(session_data)
+                session.update_activity()
+                return session
         except Exception as e:
-            logger.error(f"Error getting session stats: {e}")
-            return {
-                "active_sessions": -1,
-                "backup_sessions": -1,
-                "error": str(e)
-            }
-    
-    def cleanup_expired_backups(self):
-        """Cleanup устаревших backup записей (maintenance задача)"""
-        
+            logger.error(f"Async error retrieving session {session_id}: {e}")
+        return None
+
+    async def arestore_expired_session(self, session_id: str) -> ConversationSession:
+        """Async version of restore_expired_session"""
+        session = ConversationSession(
+            session_id=session_id,
+            created_at=datetime.now(),
+            last_activity=datetime.now(),
+            is_restored=True
+        )
         try:
-            # Redis автоматически удаляет записи с истекшим TTL
-            # Эта функция может быть расширена для дополнительной очистки
-            
-            backup_keys = self.redis.keys("backup:*")
-            logger.info(f"Found {len(backup_keys)} backup sessions")
-            
-            # Здесь можно добавить дополнительную логику очистки
-            # если понадобится более сложное управление TTL
-            
+            r = await get_async_redis()
+            backup_data = await r.get(f"backup:{session_id}")
+            if backup_data:
+                preferences = json.loads(backup_data)
+                session.user_preferences = {
+                    k: set(v) if isinstance(v, list) else v
+                    for k, v in preferences.items()
+                }
+                logger.info(f"Restored preferences (async) for session {session_id}")
+            else:
+                logger.info(f"No backup preferences found for session {session_id}")
         except Exception as e:
-            logger.error(f"Error during backup cleanup: {e}")
+            logger.error(f"Async error restoring preferences for {session_id}: {e}")
+        return session
+
+    async def asave_session_with_backup(self, session: ConversationSession):
+        """Async version of save_session_with_backup"""
+        try:
+            session.update_activity()
+            r = await get_async_redis()
+
+            await r.setex(
+                f"session:{session.session_id}",
+                self.session_ttl,
+                session.to_json()
+            )
+
+            if session.user_preferences:
+                preferences_backup = {
+                    k: list(v) if isinstance(v, set) else v
+                    for k, v in session.user_preferences.items()
+                }
+                await r.setex(
+                    f"backup:{session.session_id}",
+                    self.backup_ttl,
+                    json.dumps(preferences_backup)
+                )
+
+            logger.info(f"Session saved (async): {session.session_id}")
+        except Exception as e:
+            logger.error(f"Async error saving session {session.session_id}: {e}")
+            raise
 
 
 # Глобальный экземпляр менеджера сессий

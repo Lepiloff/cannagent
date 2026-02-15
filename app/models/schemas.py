@@ -34,11 +34,7 @@ class StrainBase(BaseModel):
     slug: Optional[str] = Field(None, description="URL slug")
 
 
-class StrainCreate(StrainBase):
-    pass
-
-
-# New schemas for structured data
+# Schemas for structured data
 class FeelingBase(BaseModel):
     name: str = Field(..., description="Feeling name")
     energy_type: str = Field(..., description="Energy type: energizing, relaxing, or neutral")
@@ -195,23 +191,3 @@ class CacheStatsResponse(BaseModel):
     db: int = Field(..., description="Redis database")
     
     
-class MetricsResponse(BaseModel):
-    total_requests: int = Field(..., description="Total HTTP requests")
-    active_requests: int = Field(..., description="Active HTTP requests")
-    total_chat_requests: int = Field(..., description="Total chat requests")
-    total_embeddings: int = Field(..., description="Total embedding requests")
-    cache_hit_rate: float = Field(..., description="Cache hit rate percentage")
-
-
-class StrainFilterRequest(BaseModel):
-    """Request for filtered strain search"""
-    query: Optional[str] = Field(None, description="Search query")
-    categories: Optional[List[str]] = Field(None, description="Filter by categories")
-    feelings: Optional[List[str]] = Field(None, description="Required feelings")
-    helps_with: Optional[List[str]] = Field(None, description="Required medical uses")
-    exclude_feelings: Optional[List[str]] = Field(None, description="Exclude feelings")
-    min_thc: Optional[float] = Field(None, description="Minimum THC percentage")
-    max_thc: Optional[float] = Field(None, description="Maximum THC percentage")
-    min_cbd: Optional[float] = Field(None, description="Minimum CBD percentage")
-    max_cbd: Optional[float] = Field(None, description="Maximum CBD percentage")
-    limit: int = Field(10, description="Maximum results to return") 
