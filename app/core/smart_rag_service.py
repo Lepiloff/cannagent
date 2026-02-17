@@ -108,7 +108,6 @@ class SmartRAGService:
         logger.info(f"Async processing query: {query[:50]}...")
 
         async with self.session_manager.async_session_lock(session_id):
-            # Async session management (native async Redis)
             session = await self.session_manager.aget_or_restore_session(session_id)
 
             loop = asyncio.get_event_loop()
@@ -159,6 +158,26 @@ class SmartRAGService:
         # --- Setup (CPU only) ---
         detected_language = db_svc._determine_language(explicit_language, session)
         logger.info(f"Language determined: {detected_language} (explicit: {explicit_language}, session: {session.detected_language})")
+
+        # --- Fast pre-filter: skip LLM for obvious non-search queries ---
+        quick_response = self._try_quick_response(query, detected_language)
+        if quick_response is not None:
+            logger.info("⚡ Quick response (pre-filter) - skipping LLM")
+            analysis = QueryAnalysis(
+                detected_category=None,
+                is_search_query=False,
+                natural_response=quick_response["response"],
+                suggested_follow_ups=quick_response["follow_ups"],
+                detected_language=detected_language,
+                confidence=0.95,
+            )
+            db_svc._update_session_streamlined(session, query, analysis, [])
+            await self.session_manager.asave_session_with_backup(session)
+            return await run_db(
+                db_svc._build_streamlined_response,
+                analysis, [], session,
+                {"is_search_query": False, "reason": "quick_pre_filter"}
+            )
 
         session_context = db_svc._build_session_context(session)
 
@@ -324,37 +343,43 @@ class SmartRAGService:
         # Handle no-candidates fallback (DB)
         fallback_used = False
         if not candidates:
-            fallback_used = True
+                fallback_used = True
 
-            def _fallback_candidates():
-                nonlocal candidates
-                if analysis.thc_level or analysis.cbd_level:
-                    logger.warning("No candidates with THC/CBD filters, retrying with category only")
-                    fallback_params = {}
-                    if analysis.detected_category:
-                        fallback_params['category'] = analysis.detected_category
-                    fallback_chain = db_svc.filter_factory.create_from_params(fallback_params)
-                    base_q = db_svc.repository.db.query(StrainModel)
-                    fb_candidates = fallback_chain.apply(base_q).all()
-                    logger.info(f"Fallback filtering (category only): {len(fb_candidates)} candidates")
-                    if fb_candidates:
-                        return fb_candidates
+                def _fallback_candidates():
+                    nonlocal candidates
+                    if analysis.thc_level or analysis.cbd_level:
+                        logger.warning("No candidates with THC/CBD filters, retrying with category only")
+                        fallback_params = {}
+                        if analysis.detected_category:
+                            fallback_params['category'] = analysis.detected_category
+                        fallback_chain = db_svc.filter_factory.create_from_params(fallback_params)
+                        base_q = db_svc.repository.db.query(StrainModel)
+                        fb_candidates = fallback_chain.apply(base_q).all()
+                        logger.info(f"Fallback filtering (category only): {len(fb_candidates)} candidates")
+                        if fb_candidates:
+                            return fb_candidates
 
-                logger.warning("No candidates even with category only, using all active strains")
-                return db_svc.repository.db.query(StrainModel).filter(
-                    StrainModel.active == True
-                ).all()
+                    logger.warning("No candidates even with category only, using all active strains")
+                    return db_svc.repository.db.query(StrainModel).filter(
+                        StrainModel.active == True
+                    ).all()
 
-            candidates = await run_db(_fallback_candidates)
+                candidates = await run_db(_fallback_candidates)
 
-        # ASYNC: Vector search — async embedding + DB distance calculation
+        # ASYNC: Vector search — async embedding (with cache) + DB distance calculation
         if candidates:
             try:
-                # Async LLM embedding (no thread needed)
-                query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
-                if not query_embedding or len(query_embedding) == 0:
-                    raise ValueError("Empty embedding received from LLM")
-                # DB: batch cosine distance (in dedicated thread)
+                # Check embedding cache first
+                from app.core.cache import cache_service
+                query_embedding = await cache_service.get_embedding(query)
+                if query_embedding is None:
+                    query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
+                    if not query_embedding or len(query_embedding) == 0:
+                        raise ValueError("Empty embedding received from LLM")
+                    await cache_service.set_embedding(query, query_embedding)
+                else:
+                    logger.info("Embedding cache hit")
+
                 result_strains = await run_db(
                     db_svc.vector_search._search_with_embedding,
                     query_embedding, candidates, analysis.detected_language, 5
@@ -366,7 +391,7 @@ class SmartRAGService:
         else:
             result_strains = []
 
-        # ASYNC LLM: Response generation (~0.5-1s, no thread)
+        # ASYNC LLM: Response generation with real strain names (~0.5-1s, no thread)
         if result_strains:
             try:
                 strain_info = [
@@ -407,6 +432,65 @@ class SmartRAGService:
         )
 
     # ---- Helper methods used by async pipeline ----
+
+    # Greeting/non-search patterns for fast pre-filtering (avoids ~4s LLM call)
+    _GREETING_PATTERNS_EN = {
+        "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
+        "thanks", "thank you", "bye", "goodbye", "see you", "cheers",
+    }
+    _GREETING_PATTERNS_ES = {
+        "hola", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+        "gracias", "muchas gracias", "adios", "adiós", "hasta luego", "chao",
+    }
+    _HELP_PATTERNS_EN = {"what can you do", "how can you help", "help me", "what do you do"}
+    _HELP_PATTERNS_ES = {"que puedes hacer", "qué puedes hacer", "como me ayudas", "cómo me ayudas", "ayudame", "ayúdame"}
+    _CHITCHAT_PATTERNS = {"how are you", "como estas", "cómo estás", "what's up", "que tal", "qué tal"}
+
+    def _try_quick_response(self, query: str, language: str) -> Optional[Dict[str, Any]]:
+        """
+        Fast keyword-based pre-filter for obvious non-search queries.
+        Returns a response dict if matched, None otherwise (falls through to LLM).
+        Only matches clear, unambiguous non-search patterns.
+        """
+        q = query.lower().strip().rstrip("!?.,:;")
+
+        # Check greetings
+        if q in self._GREETING_PATTERNS_EN or q in self._GREETING_PATTERNS_ES:
+            if language == "es":
+                return {
+                    "response": "¡Hola! Soy tu budtender virtual. Puedo ayudarte a encontrar la cepa perfecta según tus necesidades: para dormir, energía, dolor, o cualquier efecto que busques. ¿Qué estás buscando?",
+                    "follow_ups": ["Cepas para dormir", "Sativas energéticas", "Alto CBD para dolor"],
+                }
+            return {
+                "response": "Hi there! I'm your virtual budtender. I can help you find the perfect strain based on your needs: sleep, energy, pain relief, or any specific effects. What are you looking for?",
+                "follow_ups": ["Strains for sleep", "Energetic sativas", "High CBD for pain"],
+            }
+
+        # Check help requests
+        if q in self._HELP_PATTERNS_EN or q in self._HELP_PATTERNS_ES:
+            if language == "es":
+                return {
+                    "response": "Puedo ayudarte a encontrar cepas de cannabis según tus preferencias. Dime qué efectos buscas (relajación, energía, creatividad), para qué condición (dolor, insomnio, ansiedad), o qué tipo prefieres (indica, sativa, híbrido).",
+                    "follow_ups": ["Indica para relajar", "Sativa para energía", "Alto CBD medicinal"],
+                }
+            return {
+                "response": "I can help you find cannabis strains based on your preferences. Tell me what effects you're looking for (relaxation, energy, creativity), what condition (pain, insomnia, anxiety), or what type you prefer (indica, sativa, hybrid).",
+                "follow_ups": ["Indica for relaxation", "Sativa for energy", "High CBD medical"],
+            }
+
+        # Check chitchat
+        if q in self._CHITCHAT_PATTERNS:
+            if language == "es":
+                return {
+                    "response": "¡Todo bien! Estoy aquí para ayudarte a encontrar la cepa ideal. ¿Qué estás buscando hoy?",
+                    "follow_ups": ["Cepas para dormir", "Algo energético", "Recomendaciones populares"],
+                }
+            return {
+                "response": "I'm doing great! I'm here to help you find your ideal strain. What are you looking for today?",
+                "follow_ups": ["Strains for sleep", "Something energetic", "Popular recommendations"],
+            }
+
+        return None
 
     def _resolve_to_db_values(
         self,

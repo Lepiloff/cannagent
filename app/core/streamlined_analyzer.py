@@ -710,9 +710,11 @@ Query: "now show me sativa strains for energy"
                 elif cbd_level not in ["low", "medium", "high"]:
                     cbd_level = None
 
-            # Нормализация query intent
-            is_search_query = raw_result.get("is_search_query", True)  # Default to True
-            if isinstance(is_search_query, str):
+            # Нормализация query intent — default to True if unclear (matches prompt instruction)
+            is_search_query = raw_result.get("is_search_query", True)
+            if is_search_query is None:
+                is_search_query = True
+            elif isinstance(is_search_query, str):
                 is_search_query = is_search_query.lower() in ["true", "yes", "1"]
 
             # Нормализация specific strain name

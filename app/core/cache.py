@@ -59,7 +59,7 @@ class CacheService:
         try:
             if not self.cache:
                 return False
-            await self.cache.set(cache_key, embedding, ttl=int(os.getenv('CACHE_TTL', '300')))
+            await self.cache.set(cache_key, embedding, ttl=int(os.getenv('EMBEDDING_CACHE_TTL', '86400')))
             logger.debug("Cached embedding", text_length=len(text))
             return True
         except Exception as e:
