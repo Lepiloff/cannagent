@@ -159,3 +159,8 @@ test.db
 Thumbs.db
 *.swp
 *.swo
+
+# Private/local docs and local agent state
+*.md
+private_docs/
+.claude/
