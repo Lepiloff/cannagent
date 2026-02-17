@@ -249,7 +249,7 @@ class SmartRAGService:
             return await run_db(
                 db_svc._build_streamlined_response,
                 analysis, result_strains, session,
-                {"is_follow_up": True, "deterministic_executor": True}
+                {"is_search_query": True, "is_follow_up": True, "deterministic_executor": True}
             )
 
         # --- Branch: specific strain (DB + async embedding fallback) ---
@@ -287,7 +287,7 @@ class SmartRAGService:
             return await run_db(
                 db_svc._build_streamlined_response,
                 analysis, result_strains, session,
-                {"specific_strain_query": True, "strain_name": analysis.specific_strain_name}
+                {"is_search_query": True, "specific_strain_query": True, "strain_name": analysis.specific_strain_name}
             )
 
         # --- Main search path ---

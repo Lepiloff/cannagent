@@ -37,9 +37,14 @@ class CacheService:
         hash_obj = hashlib.md5(data.encode())
         return f"{prefix}:{hash_obj.hexdigest()}"
     
+    def _embedding_cache_prefix(self) -> str:
+        """Include model name in embedding cache key to prevent cross-model stale reuse."""
+        model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
+        return f"emb:{model}"
+
     async def get_embedding(self, text: str) -> Optional[List[float]]:
         """Get cached embedding for text."""
-        cache_key = self._generate_cache_key("embedding", text)
+        cache_key = self._generate_cache_key(self._embedding_cache_prefix(), text)
         try:
             if not self.cache:
                 return None
@@ -55,7 +60,7 @@ class CacheService:
     
     async def set_embedding(self, text: str, embedding: List[float]) -> bool:
         """Cache embedding for text."""
-        cache_key = self._generate_cache_key("embedding", text)
+        cache_key = self._generate_cache_key(self._embedding_cache_prefix(), text)
         try:
             if not self.cache:
                 return False
