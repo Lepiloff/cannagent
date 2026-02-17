@@ -86,11 +86,13 @@ def print_test_result(result: TestResult):
         print(f"       {Fore.YELLOW}{result.details}{Style.RESET_ALL}")
 
 
-def send_query(message: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+def send_query(message: str, session_id: Optional[str] = None, language: Optional[str] = None) -> Dict[str, Any]:
     """Send chat query to API"""
     payload = {"message": message}
     if session_id:
         payload["session_id"] = session_id
+    if language:
+        payload["language"] = language
 
     try:
         response = requests.post(API_ENDPOINT, json=payload, timeout=30)
@@ -114,25 +116,29 @@ def test_intent_detection():
             "query": "hey, how can you help me",
             "expected_search": False,
             "expected_strains": 0,
-            "description": "Greeting query"
+            "description": "Greeting query",
+            "language": "en",
         },
         {
             "query": "thank you!",
             "expected_search": False,
             "expected_strains": 0,
-            "description": "Thank you message"
+            "description": "Thank you message",
+            "language": "en",
         },
         {
             "query": "hola, ¿qué puedes hacer?",
             "expected_search": False,
             "expected_strains": 0,
-            "description": "Spanish greeting"
+            "description": "Spanish greeting",
+            "language": "es",
         },
         {
             "query": "what is cannabis?",
             "expected_search": False,
             "expected_strains": 0,
-            "description": "General question"
+            "description": "General question",
+            "language": "en",
         },
 
         # Search queries (should return strains)
@@ -140,18 +146,20 @@ def test_intent_detection():
             "query": "suggest me indica",
             "expected_search": True,
             "expected_strains": ">0",
-            "description": "Simple search query"
+            "description": "Simple search query",
+            "language": "en",
         },
         {
             "query": "necesito algo para dormir",
             "expected_search": True,
             "expected_strains": ">0",
-            "description": "Spanish medical query"
+            "description": "Spanish medical query",
+            "language": "es",
         },
     ]
 
     for case in test_cases:
-        data = send_query(case["query"])
+        data = send_query(case["query"], language=case.get("language"))
 
         if "error" in data:
             print_test_result(TestResult(
@@ -202,14 +210,15 @@ def test_attribute_filtering():
     print_header("TEST SUITE 2: ATTRIBUTE FILTERING")
 
     # Test 1: Exact flavor match
-    data = send_query("suggest me indica with tropical flavor and high thc")
+    data = send_query("suggest me indica with tropical flavor and high thc", language="en")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
 
+    filter_flavors_lower = [f.lower() for f in filters.get("flavors", [])]
     passed = (
         filters.get("category") == "Indica" and
-        "tropical" in filters.get("flavors", []) and
+        "tropical" in filter_flavors_lower and
         filters.get("min_thc") == 20 and
         len(strains) > 0
     )
@@ -240,7 +249,7 @@ def test_attribute_filtering():
     ))
 
     # Test 2: Fuzzy matching (typo)
-    data = send_query("suggest me indica with tropicas flavor and high thc")
+    data = send_query("suggest me indica with tropicas flavor and high thc", language="en")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
@@ -254,8 +263,9 @@ def test_attribute_filtering():
                 has_tropical = True
                 break
 
+    filter_flavors_lower2 = [f.lower() for f in filters.get("flavors", [])]
     passed = (
-        "tropicas" in filters.get("flavors", []) and  # Fuzzy input preserved
+        "tropicas" in filter_flavors_lower2 and  # Fuzzy input preserved
         len(strains) > 0 and
         has_tropical  # But found "tropical"
     )
@@ -273,17 +283,17 @@ def test_attribute_filtering():
     ))
 
     # Test 3: Effects filtering
-    data = send_query("dame algo relajado para dormir con alto thc")
+    data = send_query("dame algo relajado para dormir con alto thc", language="es")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
 
-    # Check that results have relaxed/sleepy effects
+    # Check that results have relaxed/sleepy effects (accept both EN and ES names)
     has_relaxed = False
     if strains:
         for strain in strains:
             effects = [f["name"].lower() for f in strain.get("feelings", [])]
-            if "relaxed" in effects or "sleepy" in effects:
+            if any(e in effects for e in ["relaxed", "sleepy", "relajado", "soñoliento", "somnoliento"]):
                 has_relaxed = True
                 break
 
@@ -307,7 +317,7 @@ def test_attribute_filtering():
     ))
 
     # Test 4: Medical use (helps_with)
-    data = send_query("which strains help with pain and anxiety")
+    data = send_query("which strains help with pain and anxiety", language="en")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
@@ -348,7 +358,7 @@ def test_sql_prefiltering():
     print_header("TEST SUITE 3: SQL PRE-FILTERING")
 
     # Test 1: Category filter
-    data = send_query("show me sativa strains")
+    data = send_query("show me sativa strains", language="en")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
@@ -375,7 +385,7 @@ def test_sql_prefiltering():
     ))
 
     # Test 2: High THC filter
-    data = send_query("show me high thc strains")
+    data = send_query("show me high thc strains", language="en")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
@@ -407,7 +417,7 @@ def test_sql_prefiltering():
     ))
 
     # Test 3: Combined filters
-    data = send_query("show me indica with high thc")
+    data = send_query("show me indica with high thc", language="en")
 
     filters = data.get("filters_applied", {})
     strains = data.get("recommended_strains", [])
@@ -452,27 +462,31 @@ def test_bilingual_support():
         {
             "query": "necesito algo para dormir",
             "expected_lang": "es",
-            "description": "Spanish sleep query"
+            "description": "Spanish sleep query",
+            "language": "es",
         },
         {
             "query": "I need something for sleep",
             "expected_lang": "en",
-            "description": "English sleep query"
+            "description": "English sleep query",
+            "language": "en",
         },
         {
             "query": "muéstrame sativas energéticas",
             "expected_lang": "es",
-            "description": "Spanish energy query"
+            "description": "Spanish energy query",
+            "language": "es",
         },
         {
             "query": "show me energetic sativas",
             "expected_lang": "en",
-            "description": "English energy query"
+            "description": "English energy query",
+            "language": "en",
         },
     ]
 
     for case in test_cases:
-        data = send_query(case["query"])
+        data = send_query(case["query"], language=case.get("language"))
 
         detected_lang = data.get("language", "").lower()
         strains = data.get("recommended_strains", [])
@@ -504,7 +518,7 @@ def test_followup_queries():
     print_header("TEST SUITE 5: FOLLOW-UP QUERIES")
 
     # Step 1: Initial search
-    data1 = send_query("suggest me indica with high thc")
+    data1 = send_query("suggest me indica with high thc", language="en")
     session_id = data1.get("session_id")
     strains1 = data1.get("recommended_strains", [])
 
@@ -523,7 +537,7 @@ def test_followup_queries():
     ))
 
     # Step 2: Follow-up query
-    data2 = send_query("which one has the lowest thc", session_id=session_id)
+    data2 = send_query("which one has the lowest thc", session_id=session_id, language="en")
 
     filters2 = data2.get("filters_applied", {})
     strains2 = data2.get("recommended_strains", [])
@@ -564,7 +578,7 @@ def test_fallback_strategies():
     print_header("TEST SUITE 6: FALLBACK STRATEGIES")
 
     # Test: Very specific query that might have 0 exact matches
-    data = send_query("indica with cbd over 15%")
+    data = send_query("indica with cbd over 15%", language="en")
 
     strains = data.get("recommended_strains", [])
     response_text = data.get("response", "")
@@ -601,7 +615,7 @@ def test_vector_search():
     print_header("TEST SUITE 7: VECTOR SEARCH")
 
     # Semantic query (no exact keywords)
-    data = send_query("I want something to relax after work")
+    data = send_query("I want something to relax after work", language="en")
 
     strains = data.get("recommended_strains", [])
     filters = data.get("filters_applied", {})
