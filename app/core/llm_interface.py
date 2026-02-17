@@ -1,7 +1,10 @@
 import asyncio
+import logging
 import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class LLMInterface(ABC):
@@ -33,7 +36,7 @@ class OpenAILLM(LLMInterface):
         from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 
         self.embeddings = OpenAIEmbeddings(
-            model=os.getenv('EMBEDDING_MODEL', 'text-embedding-ada-002'),
+            model=os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small'),
             openai_api_key=api_key
         )
         self.chat_model = ChatOpenAI(
