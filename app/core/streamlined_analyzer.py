@@ -147,14 +147,16 @@ class StreamlinedQueryAnalyzer:
         if language == "es":
             prompt = f"""Eres un budtender experto. Genera una respuesta breve.
 Consulta: "{query}"
-Cepas: {strain_info}
-Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre.
+Cepas disponibles: {strain_info}
+IMPORTANTE: Menciona SOLO las cepas de la lista anterior por su nombre exacto. NO inventes ni menciones otras cepas.
+Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre exacto.
 Respuesta:"""
         else:
             prompt = f"""You are an expert cannabis budtender. Generate a helpful response.
 Query: "{query}"
-Strains: {strain_info}
-Write 2-3 sentences recommending these strains. Mention 1-2 by name.
+Available strains: {strain_info}
+IMPORTANT: ONLY mention strains from the list above by their exact names. Do NOT invent or mention other strain names.
+Write 2-3 sentences recommending these strains. Mention 1-2 by their exact name.
 Response:"""
 
         try:
@@ -187,14 +189,16 @@ Response:"""
         if language == "es":
             prompt = f"""Eres un budtender experto. Genera una respuesta breve.
 Consulta: "{query}"
-Cepas: {strain_info}
-Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre.
+Cepas disponibles: {strain_info}
+IMPORTANTE: Menciona SOLO las cepas de la lista anterior por su nombre exacto. NO inventes ni menciones otras cepas.
+Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre exacto.
 Respuesta:"""
         else:
             prompt = f"""You are an expert cannabis budtender. Generate a helpful response.
 Query: "{query}"
-Strains: {strain_info}
-Write 2-3 sentences recommending these strains. Mention 1-2 by name.
+Available strains: {strain_info}
+IMPORTANT: ONLY mention strains from the list above by their exact names. Do NOT invent or mention other strain names.
+Write 2-3 sentences recommending these strains. Mention 1-2 by their exact name.
 Response:"""
 
         try:
@@ -221,14 +225,16 @@ Response:"""
         if language == "es":
             return f"""Eres un budtender experto. Genera una respuesta breve.
 Consulta: "{query}"
-Cepas: {strain_info}
-Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre.
+Cepas disponibles: {strain_info}
+IMPORTANTE: Menciona SOLO las cepas de la lista anterior por su nombre exacto. NO inventes ni menciones otras cepas.
+Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre exacto.
 Respuesta:"""
         else:
             return f"""You are an expert cannabis budtender. Generate a helpful response.
 Query: "{query}"
-Strains: {strain_info}
-Write 2-3 sentences recommending these strains. Mention 1-2 by name.
+Available strains: {strain_info}
+IMPORTANT: ONLY mention strains from the list above by their exact names. Do NOT invent or mention other strain names.
+Write 2-3 sentences recommending these strains. Mention 1-2 by their exact name.
 Response:"""
 
     async def astream_response_only(
@@ -549,6 +555,7 @@ Analyze the user's query and provide:
    **is_follow_up = FALSE** if ANY:
    ✗ User introduces NEW criteria (different category, new effects, new flavors)
    ✗ User requests NEW search (suggest/find/show/recommend with new parameters)
+   ✗ User asks for "similar strains", "strains like this", "more like this", "other options similar to" → always new search
 
 5.5. **Follow-up Intent Extraction** (ONLY when is_follow_up=true):
    Extract structured intent for deterministic execution:

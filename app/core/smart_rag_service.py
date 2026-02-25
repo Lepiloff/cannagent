@@ -231,6 +231,13 @@ class SmartRAGService:
             )
 
         # --- Branch: follow-up (deterministic, CPU + DB for response building) ---
+        # Override: "similar strains" after a specific-strain (1-result) context = new search
+        _similar_keywords = ("similar", "like this", "like these", "more like", "same kind", "alike")
+        if (analysis.is_follow_up and len(session_strains) <= 1
+                and any(kw in query.lower() for kw in _similar_keywords)):
+            logger.info("🔄 Override follow-up → new search (similar strains with minimal context)")
+            analysis.is_follow_up = False
+
         if analysis.is_follow_up and session_strains:
             logger.info("🔄 Follow-up query detected - using deterministic executor")
             intent = analysis.follow_up_intent
@@ -540,6 +547,13 @@ class SmartRAGService:
                     return
 
                 # Follow-up branch
+                # Override: "similar strains" after a specific-strain (1-result) context = new search
+                _similar_keywords = ("similar", "like this", "like these", "more like", "same kind", "alike")
+                if (analysis.is_follow_up and len(session_strains) <= 1
+                        and any(kw in query.lower() for kw in _similar_keywords)):
+                    logger.info("🔄 Override follow-up → new search (similar strains with minimal context)")
+                    analysis.is_follow_up = False
+
                 if analysis.is_follow_up and session_strains:
                     from app.core.follow_up_executor import detect_follow_up_intent_keywords
                     intent = analysis.follow_up_intent
