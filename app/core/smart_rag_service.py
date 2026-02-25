@@ -658,9 +658,11 @@ class SmartRAGService:
                 else:
                     result_strains = []
 
-                # Build metadata response (without natural_response — that will be streamed)
-                placeholder_response = "..."
-                analysis.natural_response = placeholder_response
+                # Preserve LLM natural_response for empty-results fallback,
+                # then replace with placeholder so _update_session_streamlined
+                # doesn't save "..." — session history is updated AFTER streaming.
+                original_natural_response = analysis.natural_response
+                analysis.natural_response = "..."
 
                 if fallback_used and result_strains:
                     if analysis.detected_language == 'es':
@@ -670,6 +672,8 @@ class SmartRAGService:
                 else:
                     fallback_notice = ""
 
+                # Save session now (provides session_id for metadata), history entry
+                # will be updated with real response text after streaming completes.
                 db_svc._update_session_streamlined(session, query, analysis, result_strains)
                 await self.session_manager.asave_session_with_backup(session)
 
@@ -678,12 +682,14 @@ class SmartRAGService:
                     analysis, result_strains, session, filter_params
                 )
 
-                # Yield metadata (strains, filters, session_id, etc.)
+                # Yield metadata (strains, filters, session_id).
+                # response field is intentionally empty — real text comes via response_chunks.
                 metadata_dict = _json.loads(metadata_response.model_dump_json())
-                metadata_dict["response"] = fallback_notice  # Clear placeholder, will stream real response
+                metadata_dict["response"] = ""
                 yield {"type": "metadata", "data": metadata_dict}
 
-                # Stream the natural language response
+                # Stream the natural language response and accumulate for session history.
+                full_response = ""
                 if result_strains:
                     strain_info = [
                         {'name': s.name, 'category': s.category, 'thc': str(s.thc) if s.thc else 'N/A'}
@@ -691,12 +697,24 @@ class SmartRAGService:
                     ]
                     if fallback_notice:
                         yield {"type": "response_chunk", "text": fallback_notice}
+                        full_response += fallback_notice
                     async for chunk in db_svc.streamlined_analyzer.astream_response_only(
                         query=query, strains=strain_info, language=detected_language
                     ):
                         yield {"type": "response_chunk", "text": chunk}
+                        full_response += chunk
+                else:
+                    # No strains found even after fallback — use LLM's natural_response directly.
+                    if original_natural_response and original_natural_response != "...":
+                        yield {"type": "response_chunk", "text": original_natural_response}
+                        full_response = original_natural_response
 
                 yield {"type": "done"}
+
+                # Update session history with the real streamed response.
+                if session.conversation_history and full_response:
+                    session.conversation_history[-1]['response'] = full_response
+                    await self.session_manager.asave_session_with_backup(session)
 
             finally:
                 if db_ref[0]:
