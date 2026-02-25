@@ -212,6 +212,47 @@ Response:"""
                 return f"I recommend {first}. It's a great option for you."
             return "I found some great options for you!"
 
+    def _build_mini_prompt(self, query: str, strains: List[Dict[str, Any]], language: str) -> str:
+        """Build the mini-prompt for response generation (shared by sync/async/streaming)."""
+        strain_info = ", ".join([
+            f"{s.get('name', '?')} ({s.get('category', '?')}, {s.get('thc', '?')}% THC)"
+            for s in strains[:5]
+        ])
+        if language == "es":
+            return f"""Eres un budtender experto. Genera una respuesta breve.
+Consulta: "{query}"
+Cepas: {strain_info}
+Escribe 2-3 oraciones recomendando estas cepas. Menciona 1-2 por nombre.
+Respuesta:"""
+        else:
+            return f"""You are an expert cannabis budtender. Generate a helpful response.
+Query: "{query}"
+Strains: {strain_info}
+Write 2-3 sentences recommending these strains. Mention 1-2 by name.
+Response:"""
+
+    async def astream_response_only(
+        self,
+        query: str,
+        strains: List[Dict[str, Any]],
+        language: str = "en"
+    ) -> "AsyncIterator[str]":
+        """Streaming version of agenerate_response_only — yields text chunks."""
+        prompt = self._build_mini_prompt(query, strains, language)
+        try:
+            async for chunk in self.llm.astream_response(prompt):
+                yield chunk
+        except Exception as e:
+            logger.warning(f"Streaming mini-prompt failed: {e}")
+            if strains:
+                first = strains[0].get('name', 'this strain')
+                if language == "es":
+                    yield f"Te recomiendo {first}. Es una excelente opción."
+                else:
+                    yield f"I recommend {first}. It's a great option for you."
+            else:
+                yield "I found some great options for you!"
+
     def analyze_query(
         self,
         user_query: str,
@@ -344,66 +385,56 @@ Response:"""
 
         return context
 
-    def _analyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
-        """Анализ через LLM с динамическим DB контекстом"""
-
-        target_language = explicit_language or context.get("target_language", "es")
-
-        # Build DB context if ContextBuilder available
-        db_context_section = ""
+    def _build_db_context_section(self, context: Dict[str, Any], target_language: str) -> str:
+        """Build DB taxonomy context section for prompts."""
         if self.context_builder:
             try:
-                # Get DB taxonomy data
                 llm_context = self.context_builder.build_llm_context(
                     user_query=context["user_query"],
                     language=target_language,
-                    session_context=None,  # Already in context
+                    session_context=None,
                     found_strains=None,
                     fallback_used=bool(context.get("fallback_note"))
                 )
-                # Build formatted DB context section
-                db_context_section = self.context_builder.build_prompt_section(llm_context)
+                db_context_section = self.context_builder.build_db_context_section(llm_context)
                 logger.debug("Using dynamic DB taxonomy context from ContextBuilder")
+                return db_context_section
             except Exception as e:
                 logger.warning(f"Failed to build DB context: {e}. Using fallback.")
-                db_context_section = self._build_fallback_db_context()
+                return self._build_fallback_db_context()
         else:
             logger.debug("ContextBuilder not available - using hardcoded taxonomy")
-            db_context_section = self._build_fallback_db_context()
+            return self._build_fallback_db_context()
 
-        prompt = self._get_analysis_prompt_template()
+    def _analyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
+        """Анализ через LLM с раздельными system/user промптами для prompt caching."""
 
-        # Merge DB context with user context for formatting
-        format_context = {**context, "db_context": db_context_section}
-        formatted_prompt = prompt.format(**format_context)
+        target_language = explicit_language or context.get("target_language", "es")
 
-        # Получение JSON ответа от LLM
+        db_context_section = self._build_db_context_section(context, target_language)
+
+        # Build separate system (static, cached) and user (variable) prompts
+        system_prompt = self._get_system_prompt_template().format(db_context=db_context_section)
+        user_prompt = self._get_user_prompt_template().format(**context)
+
         try:
-            if hasattr(self.llm, 'extract_json'):
-                result = self.llm.extract_json(formatted_prompt)
-            else:
-                response = self.llm.generate_response(formatted_prompt)
-                result = self._extract_json_from_response(response)
-
+            response = self.llm.generate_response_with_system(system_prompt, user_prompt)
+            result = self._extract_json_from_response(response)
             return result
-
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
 
-    def _get_analysis_prompt_template(self) -> str:
-        """Returns the analysis prompt template shared by sync and async LLM calls."""
+    def _get_system_prompt_template(self) -> str:
+        """Returns the STATIC system prompt template (cached by OpenAI prompt caching).
+
+        This template contains: role definition, DB taxonomy, analysis instructions,
+        examples, and response format. It changes only when DB taxonomy updates
+        or language switches (en↔es). OpenAI caches this automatically when >1024 tokens.
+        """
         return """You are an expert cannabis budtender AI assistant.
 
 {db_context}
-
-USER CONTEXT:
-User query: "{user_query}"
-Target language: {target_language}
-Previous language: {previous_language}
-Conversation summary: {conversation_summary}
-Recommended strains: {recommended_strains}
-{fallback_note}
 
 TASK:
 Analyze the user's query and provide:
@@ -546,7 +577,7 @@ Analyze the user's query and provide:
    - Keep response concise (2-3 sentences)
    - Be conversational like a knowledgeable budtender
 
-6. **Follow-up Suggestions**:
+7. **Follow-up Suggestions**:
    - Suggest 2-3 relevant follow-up questions
    - Make them contextual to the user's query
    - Use the target language
@@ -557,20 +588,19 @@ CRITICAL GUIDELINES:
 - Focus on high-quality natural response
 - Keep it simple and helpful
 - **FOLLOW-UP DETECTION IS CRITICAL**: If user references previous results, set is_follow_up=true
- - **LANGUAGE IS CRITICAL**: natural_response and suggested_follow_ups MUST be in the target language
+- **LANGUAGE IS CRITICAL**: natural_response and suggested_follow_ups MUST be in the target language
 
 ⚠️ **ABSOLUTELY CRITICAL FOR FOLLOW-UP QUERIES**:
 When is_follow_up=true, you MUST follow these rules for "natural_response":
 
 1. **If query is about comparing/selecting from current list** (e.g., "which has lowest THC", "which is strongest", "show me the indica from that list"):
-   - ONLY use strains from "Recommended strains" list above
+   - ONLY use strains from "Recommended strains" list
    - DO NOT mention ANY strains outside this list
    - Example: "Recommended strains" = [A (16% THC), B (19% THC)] + Query "which has lowest THC" → Answer: "A has the lowest THC at 16%"
 
 2. **If current list has NO suitable options for the request** (e.g., user asks for Indica but list only has Sativa):
    - Set is_follow_up=false to trigger new search
    - Explain that current list doesn't match and suggest new search
-   - Example: "Recommended strains" = [Sativa1, Sativa2] + Query "show me indica" → is_follow_up=false, suggest new Indica search
 
 3. **NEVER mention strains from general database knowledge when is_follow_up=true and suitable options exist in "Recommended strains"**
 
@@ -622,40 +652,35 @@ Query: "now show me sativa strains for energy"
 {{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "detected_category": "Sativa", "required_effects": ["energetic"], "natural_response": "I'll find you energetic sativa strains.", "suggested_follow_ups": ["THC level?", "Flavor?"], "confidence": 0.95}}
 """
 
-    async def _aanalyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
-        """Async version of _analyze_with_llm: reuses the same prompt, async LLM call."""
+    def _get_user_prompt_template(self) -> str:
+        """Returns the VARIABLE user prompt template (changes every request).
 
-        # Build the prompt identically to _analyze_with_llm
+        Contains only user-specific context: query, language, session info.
+        This is NOT cached — only the system prompt prefix is cached by OpenAI.
+        """
+        return """USER QUERY: "{user_query}"
+TARGET LANGUAGE: {target_language}
+PREVIOUS LANGUAGE: {previous_language}
+CONVERSATION: {conversation_summary}
+RECOMMENDED STRAINS: {recommended_strains}
+{fallback_note}
+
+Respond with JSON only."""
+
+    async def _aanalyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
+        """Async version of _analyze_with_llm with separate system/user prompts for prompt caching."""
+
         target_language = explicit_language or context.get("target_language", "es")
 
-        db_context_section = ""
-        if self.context_builder:
-            try:
-                llm_context = self.context_builder.build_llm_context(
-                    user_query=context["user_query"],
-                    language=target_language,
-                    session_context=None,
-                    found_strains=None,
-                    fallback_used=bool(context.get("fallback_note"))
-                )
-                db_context_section = self.context_builder.build_prompt_section(llm_context)
-            except Exception as e:
-                logger.warning(f"Failed to build DB context: {e}. Using fallback.")
-                db_context_section = self._build_fallback_db_context()
-        else:
-            db_context_section = self._build_fallback_db_context()
+        db_context_section = self._build_db_context_section(context, target_language)
 
-        # Use the same prompt template as _analyze_with_llm
-        # (extracted via the same format_context approach)
-        format_context = {**context, "db_context": db_context_section}
-        formatted_prompt = self._get_analysis_prompt_template().format(**format_context)
+        # Build separate system (static, cached) and user (variable) prompts
+        system_prompt = self._get_system_prompt_template().format(db_context=db_context_section)
+        user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
-            if hasattr(self.llm, 'aextract_json'):
-                result = await self.llm.aextract_json(formatted_prompt)
-            else:
-                response = await self.llm.agenerate_response(formatted_prompt)
-                result = self._extract_json_from_response(response)
+            response = await self.llm.agenerate_response_with_system(system_prompt, user_prompt)
+            result = self._extract_json_from_response(response)
             return result
         except Exception as e:
             logger.error(f"Async LLM call failed: {e}")
@@ -857,23 +882,18 @@ Query: "now show me sativa strains for energy"
 
     def _build_fallback_db_context(self) -> str:
         """
-        Build minimal hardcoded DB context when ContextBuilder is not available
+        Build minimal hardcoded DB context when ContextBuilder is not available.
 
         Returns:
-            Formatted DB context section (minimal)
+            Formatted DB context section (minimal, no user context — that goes in user prompt)
         """
         return """DATABASE CONTEXT (limited - ContextBuilder not available):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Available Flavors: tropical, citrus, earthy, pine, sweet, berry, diesel, cheese, vanilla, menthol, peppermint, lemon, lime
 Available Feelings: relaxed, sleepy, happy, euphoric, energetic, focused, creative, uplifted, hungry, talkative
 Available Medical Uses: pain, anxiety, stress, insomnia, depression, inflammation, nausea, headaches
 Available Negatives: dry mouth, dry eyes, paranoia, anxiety, dizzy, headache
 Available Terpenes: Myrcene, Limonene, Pinene, Caryophyllene, Linalool, Humulene
-
 THC Range in DB: 0.5-28.0%
 CBD Range in DB: 0.1-15.0%
 Categories: Indica, Sativa, Hybrid
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-NOTE: Using hardcoded taxonomy. For complete DB data, integrate ContextBuilder.
 """

@@ -431,6 +431,278 @@ class SmartRAGService:
             analysis, result_strains, session, filter_params
         )
 
+    async def aprocess_contextual_query_streaming(
+        self,
+        query: str,
+        session_id: Optional[str] = None,
+        language: Optional[str] = None,
+        history: Optional[List[str]] = None,
+        source_platform: Optional[str] = None
+    ):
+        """
+        Streaming version of aprocess_contextual_query.
+
+        Yields JSON-serializable dicts:
+        1. First yield: {"type": "metadata", ...} with strains, filters, session_id etc.
+        2. Subsequent yields: {"type": "response_chunk", "text": "..."} with streaming text
+        3. Final yield: {"type": "done"}
+
+        The non-streaming pipeline runs analysis → DB → vector search as normal,
+        then streams only the mini-prompt response generation.
+        """
+        import json as _json
+
+        logger.info(f"Streaming processing query: {query[:50]}...")
+
+        async with self.session_manager.async_session_lock(session_id):
+            session = await self.session_manager.aget_or_restore_session(session_id)
+
+            loop = asyncio.get_event_loop()
+            db_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="db-stream")
+            db_ref = [None]
+
+            def _init_db():
+                from app.db.database import SessionLocal
+                db = SessionLocal()
+                db_ref[0] = db
+                repo = StrainRepository(db)
+                return SmartRAGService(repo)
+
+            db_svc = await loop.run_in_executor(db_executor, _init_db)
+
+            def run_db(fn, *args):
+                return loop.run_in_executor(db_executor, fn, *args)
+
+            try:
+                detected_language = db_svc._determine_language(language, session)
+
+                # Quick pre-filter
+                quick_response = self._try_quick_response(query, detected_language)
+                if quick_response is not None:
+                    analysis = QueryAnalysis(
+                        detected_category=None,
+                        is_search_query=False,
+                        natural_response=quick_response["response"],
+                        suggested_follow_ups=quick_response["follow_ups"],
+                        detected_language=detected_language,
+                        confidence=0.95,
+                    )
+                    db_svc._update_session_streamlined(session, query, analysis, [])
+                    await self.session_manager.asave_session_with_backup(session)
+                    response = await run_db(
+                        db_svc._build_streamlined_response,
+                        analysis, [], session,
+                        {"is_search_query": False, "reason": "quick_pre_filter"}
+                    )
+                    yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
+                    yield {"type": "done"}
+                    return
+
+                session_context = db_svc._build_session_context(session)
+                session_strains = await run_db(db_svc._get_session_strains, session)
+
+                analysis_context = session_context.copy()
+                if session_strains:
+                    analysis_context['recommended_strains'] = [
+                        f"{s.name} ({s.category}, THC: {s.thc}%)"
+                        for s in session_strains[:5]
+                    ]
+                else:
+                    analysis_context['recommended_strains'] = []
+
+                # LLM Analysis
+                try:
+                    analysis = await db_svc.streamlined_analyzer.aanalyze_query(
+                        user_query=query,
+                        session_context=analysis_context,
+                        found_strains=None,
+                        explicit_language=detected_language
+                    )
+                except Exception as e:
+                    logger.error(f"Streaming analysis failed: {e}", exc_info=True)
+                    analysis = QueryAnalysis(
+                        detected_category=None, is_search_query=True, is_follow_up=False,
+                        natural_response="I can help you find the right strain.",
+                        suggested_follow_ups=[], detected_language=detected_language, confidence=0.5
+                    )
+
+                # Non-search branch
+                if not analysis.is_search_query:
+                    db_svc._update_session_streamlined(session, query, analysis, [])
+                    await self.session_manager.asave_session_with_backup(session)
+                    response = await run_db(
+                        db_svc._build_streamlined_response,
+                        analysis, [], session,
+                        {"is_search_query": False, "reason": "greeting_or_general_question"}
+                    )
+                    yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
+                    yield {"type": "done"}
+                    return
+
+                # Follow-up branch
+                if analysis.is_follow_up and session_strains:
+                    from app.core.follow_up_executor import detect_follow_up_intent_keywords
+                    intent = analysis.follow_up_intent
+                    if not intent:
+                        intent = detect_follow_up_intent_keywords(query)
+                    result_strains, deterministic_response = db_svc.follow_up_executor.execute(
+                        intent=intent, session_strains=session_strains, language=analysis.detected_language
+                    )
+                    analysis.natural_response = deterministic_response
+                    db_svc._update_session_streamlined(session, query, analysis, result_strains)
+                    await self.session_manager.asave_session_with_backup(session)
+                    response = await run_db(
+                        db_svc._build_streamlined_response,
+                        analysis, result_strains, session,
+                        {"is_search_query": True, "is_follow_up": True, "deterministic_executor": True}
+                    )
+                    yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
+                    yield {"type": "done"}
+                    return
+
+                # Specific strain branch
+                if analysis.specific_strain_name:
+                    def _find_specific():
+                        specific = db_svc.repository.db.query(StrainModel).filter(
+                            StrainModel.name.ilike(analysis.specific_strain_name),
+                            StrainModel.active == True
+                        ).first()
+                        if specific:
+                            return [specific], False
+                        all_s = db_svc.repository.db.query(StrainModel).filter(StrainModel.active == True).all()
+                        return all_s, True
+
+                    found_strains, needs_vs = await run_db(_find_specific)
+                    if needs_vs and found_strains:
+                        query_emb = await db_svc.vector_search.llm.agenerate_embedding(analysis.specific_strain_name)
+                        result_strains = await run_db(
+                            db_svc.vector_search._search_with_embedding,
+                            query_emb, found_strains, analysis.detected_language, 1
+                        )
+                    else:
+                        result_strains = found_strains
+                    db_svc._update_session_streamlined(session, query, analysis, result_strains)
+                    await self.session_manager.asave_session_with_backup(session)
+                    response = await run_db(
+                        db_svc._build_streamlined_response,
+                        analysis, result_strains, session,
+                        {"is_search_query": True, "specific_strain_query": True}
+                    )
+                    yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
+                    yield {"type": "done"}
+                    return
+
+                # Main search path
+                def _db_filter_phase():
+                    filter_params = {'is_search_query': True}
+                    if analysis.detected_category:
+                        filter_params['category'] = analysis.detected_category
+                    if analysis.thc_level == "low":
+                        filter_params['max_thc'] = 10
+                    elif analysis.thc_level == "medium":
+                        filter_params['min_thc'] = 10; filter_params['max_thc'] = 20
+                    elif analysis.thc_level == "high":
+                        filter_params['min_thc'] = 20
+                    if analysis.cbd_level == "low":
+                        filter_params['max_cbd'] = 3
+                    elif analysis.cbd_level == "medium":
+                        filter_params['min_cbd'] = 3; filter_params['max_cbd'] = 10
+                    elif analysis.cbd_level == "high":
+                        filter_params['min_cbd'] = 7
+                    filter_chain = db_svc.filter_factory.create_from_params(filter_params)
+                    base_query = db_svc.repository.db.query(StrainModel)
+                    filtered_query = filter_chain.apply(base_query)
+                    candidates = filtered_query.all()
+                    if candidates and (analysis.required_flavors or analysis.required_effects or
+                                      analysis.required_helps_with or analysis.exclude_negatives or
+                                      analysis.required_terpenes):
+                        original_count = len(candidates)
+                        candidates = db_svc._apply_attribute_filters(candidates, analysis, filter_params)
+                        if not candidates:
+                            candidates = filtered_query.all()
+                            filter_params['attribute_fallback'] = True
+                    return candidates, filter_params
+
+                candidates, filter_params = await run_db(_db_filter_phase)
+
+                fallback_used = False
+                if not candidates:
+                    fallback_used = True
+                    def _fallback():
+                        if analysis.thc_level or analysis.cbd_level:
+                            fb_params = {}
+                            if analysis.detected_category:
+                                fb_params['category'] = analysis.detected_category
+                            fb_chain = db_svc.filter_factory.create_from_params(fb_params)
+                            fb = fb_chain.apply(db_svc.repository.db.query(StrainModel)).all()
+                            if fb:
+                                return fb
+                        return db_svc.repository.db.query(StrainModel).filter(StrainModel.active == True).all()
+                    candidates = await run_db(_fallback)
+
+                # Vector search
+                if candidates:
+                    try:
+                        from app.core.cache import cache_service
+                        query_embedding = await cache_service.get_embedding(query)
+                        if query_embedding is None:
+                            query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
+                            await cache_service.set_embedding(query, query_embedding)
+                        result_strains = await run_db(
+                            db_svc.vector_search._search_with_embedding,
+                            query_embedding, candidates, analysis.detected_language, 5
+                        )
+                    except Exception as e:
+                        logger.error(f"Streaming vector search failed: {e}", exc_info=True)
+                        result_strains = candidates[:5]
+                else:
+                    result_strains = []
+
+                # Build metadata response (without natural_response — that will be streamed)
+                placeholder_response = "..."
+                analysis.natural_response = placeholder_response
+
+                if fallback_used and result_strains:
+                    if analysis.detected_language == 'es':
+                        fallback_notice = "ℹ️ No encontré coincidencias exactas. Aquí están las opciones más cercanas:\n\n"
+                    else:
+                        fallback_notice = "ℹ️ No exact matches found. Here are the closest options:\n\n"
+                else:
+                    fallback_notice = ""
+
+                db_svc._update_session_streamlined(session, query, analysis, result_strains)
+                await self.session_manager.asave_session_with_backup(session)
+
+                metadata_response = await run_db(
+                    db_svc._build_streamlined_response,
+                    analysis, result_strains, session, filter_params
+                )
+
+                # Yield metadata (strains, filters, session_id, etc.)
+                metadata_dict = _json.loads(metadata_response.model_dump_json())
+                metadata_dict["response"] = fallback_notice  # Clear placeholder, will stream real response
+                yield {"type": "metadata", "data": metadata_dict}
+
+                # Stream the natural language response
+                if result_strains:
+                    strain_info = [
+                        {'name': s.name, 'category': s.category, 'thc': str(s.thc) if s.thc else 'N/A'}
+                        for s in result_strains[:5]
+                    ]
+                    if fallback_notice:
+                        yield {"type": "response_chunk", "text": fallback_notice}
+                    async for chunk in db_svc.streamlined_analyzer.astream_response_only(
+                        query=query, strains=strain_info, language=detected_language
+                    ):
+                        yield {"type": "response_chunk", "text": chunk}
+
+                yield {"type": "done"}
+
+            finally:
+                if db_ref[0]:
+                    await loop.run_in_executor(db_executor, db_ref[0].close)
+                db_executor.shutdown(wait=False)
+
     # ---- Helper methods used by async pipeline ----
 
     # Greeting/non-search patterns for fast pre-filtering (avoids ~4s LLM call)

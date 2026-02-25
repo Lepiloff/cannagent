@@ -200,69 +200,52 @@ class ContextBuilder:
 
         return ", ".join(formatted)
 
-    def build_prompt_section(self, context: Dict[str, Any]) -> str:
+    def build_db_context_section(self, context: Dict[str, Any]) -> str:
         """
-        Build formatted prompt section for LLM
+        Build DB taxonomy context for the SYSTEM prompt (cached by OpenAI).
+
+        Contains ONLY static DB data: available values, ranges, categories.
+        Does NOT contain user query or session context (those go in user prompt).
 
         Args:
             context: Context dict from build_llm_context()
 
         Returns:
-            Formatted prompt section with DB context
-
-        Example:
-            ```
-            DATABASE CONTEXT (use ONLY these values):
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            Available Flavors: menthol, peppermint, tropical, citrus, ...
-            Available Feelings: relaxed, sleepy, happy, energetic, ...
-            Available Medical Uses: pain, anxiety, stress, insomnia, ...
-            Available Terpenes: Myrcene, Limonene, Pinene, ...
-            THC Range in DB: 0.5-28.3%
-            CBD Range in DB: 0.1-15.2%
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            ```
+            Formatted DB context section for system prompt
         """
-        section = f"""DATABASE CONTEXT (use ONLY these values for extraction):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        return f"""DATABASE CONTEXT (use ONLY these values for extraction):
 Available Flavors: {context['available_flavors']}
 Available Feelings: {context['available_feelings']}
 Available Medical Uses: {context['available_helps_with']}
 Available Negatives: {context['available_negatives']}
 Available Terpenes: {context['available_terpenes']}
-
 THC Range in DB: {context['thc_range']}
 CBD Range in DB: {context['cbd_range']}
 Categories: {context['categories']}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-USER CONTEXT:
+ATTRIBUTE MAPPING INSTRUCTION:
+When extracting attributes, map user input to DATABASE CONTEXT values above.
+- "mint" → check Available Flavors for "menthol", "peppermint", "spearmint"
+- "high CBD" → check CBD Range, high means ≥10%
+- "lemony" → check Available Flavors for "lemon", "citrus" AND Terpenes for "Limonene"
+"""
+
+    def build_prompt_section(self, context: Dict[str, Any]) -> str:
+        """
+        Build FULL prompt section (legacy, for backward compatibility).
+
+        Combines DB context + user context in one block.
+        Used by old single-prompt path. New code should use
+        build_db_context_section() + separate user prompt.
+        """
+        db_section = self.build_db_context_section(context)
+        user_section = f"""USER CONTEXT:
 User query: "{context['user_query']}"
 Language: {context['language']}
 Session summary: {context['session_summary']}
 Recommended strains: {context['recommended_strains']}
-{context['fallback_note']}
-
-CRITICAL INSTRUCTION:
-When extracting attributes (flavors, effects, medical uses), you MUST map user input to values from the DATABASE CONTEXT above.
-
-EXAMPLE 1 - User says "mint", DB has "menthol":
-User: "show me strains with mint flavor"
-→ Check "Available Flavors": contains "menthol, peppermint, spearmint" (similar to mint)
-→ Extract: required_flavors=["menthol", "peppermint", "spearmint"]  ✅ CORRECT
-
-EXAMPLE 2 - User says "high CBD", DB range is 0-15%:
-User: "high CBD strains"
-→ Check "CBD Range in DB": 0-15%
-→ High CBD in this DB means ≥10%
-→ Extract: cbd_level="high"  ✅ CORRECT
-
-EXAMPLE 3 - User says "lemon", DB has "limonene":
-User: "lemony strains"
-→ Check "Available Flavors": contains "lemon, citrus" AND "Available Terpenes": contains "Limonene"
-→ Extract: required_flavors=["lemon", "citrus"], required_terpenes=["Limonene"]  ✅ CORRECT
-"""
-        return section
+{context['fallback_note']}"""
+        return f"{db_section}\n{user_section}"
 
 
 # Factory function for dependency injection

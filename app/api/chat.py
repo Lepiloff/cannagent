@@ -1,6 +1,8 @@
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from app.core.smart_rag_service import SmartRAGService
 from app.core.session_manager import SessionLockTimeout
 from app.models.schemas import ChatRequest, ChatResponse
@@ -63,4 +65,50 @@ async def ask_question(
         print(f"Error processing request: {e}")
         print("Traceback:")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+
+
+@router.post("/ask/stream")
+@limiter.limit(CHAT_RATE_LIMIT)
+async def ask_question_stream(
+    request: Request,
+    chat_request: ChatRequest,
+):
+    """
+    Streaming version of /ask/ endpoint.
+
+    Returns Server-Sent Events (SSE):
+    - First event: {"type": "metadata", "data": {...}} with strains, filters, session_id
+    - Subsequent events: {"type": "response_chunk", "text": "..."} with streaming text
+    - Final event: {"type": "done"}
+
+    The metadata is sent as soon as strain search completes (~4s),
+    then the natural language response streams token-by-token.
+    This reduces perceived latency from ~7s to ~4s for first meaningful content.
+    """
+    async def event_generator():
+        try:
+            rag_service = SmartRAGService(repository=None)
+            async for chunk in rag_service.aprocess_contextual_query_streaming(
+                query=chat_request.message,
+                session_id=chat_request.session_id,
+                language=chat_request.language,
+                history=chat_request.history,
+                source_platform=chat_request.source_platform,
+            ):
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        except SessionLockTimeout:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Session busy'})}\n\n"
+        except Exception as e:
+            logger.error(f"Streaming error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
