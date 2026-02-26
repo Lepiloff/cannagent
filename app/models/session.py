@@ -33,6 +33,12 @@ class ConversationSession(BaseModel):
         default_factory=list,
         description="Detailed conversation history (max 50)"
     )
+
+    # Search context for "otras opciones" / "more options" inheritance
+    last_search_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Filters from last successful search (category, helps_with, effects, etc.) for context inheritance"
+    )
     
     class Config:
         # Для корректной сериализации Set
