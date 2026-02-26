@@ -121,43 +121,30 @@ class OpenAILLM(LLMInterface):
 
     async def agenerate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
         """Async версия generate_response_with_system для prompt caching."""
-        import time
         from langchain_core.messages import SystemMessage, HumanMessage
 
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
-        t0 = time.perf_counter()
         response = await self.chat_model.ainvoke(messages)
-        elapsed = (time.perf_counter() - t0) * 1000
 
-        # Log timing + cached tokens
         if hasattr(response, 'response_metadata'):
             token_usage = response.response_metadata.get('token_usage', {})
             prompt_details = token_usage.get('prompt_tokens_details', {})
             cached = prompt_details.get('cached_tokens', 0)
             total_prompt = token_usage.get('prompt_tokens', 0)
-            completion = token_usage.get('completion_tokens', 0)
             if cached > 0:
-                logger.info(f"⏱ LLM analysis: {elapsed:.0f}ms | tokens: {total_prompt}in/{completion}out | cache_hit: {cached}/{total_prompt} ({cached/total_prompt*100:.0f}%)")
-            else:
-                logger.info(f"⏱ LLM analysis: {elapsed:.0f}ms | tokens: {total_prompt}in/{completion}out | cache_miss")
-        else:
-            logger.info(f"⏱ LLM analysis: {elapsed:.0f}ms")
+                logger.info(f"Prompt cache hit: {cached}/{total_prompt} tokens cached ({cached/total_prompt*100:.0f}%)")
+            elif total_prompt > 0:
+                logger.debug(f"Prompt cache miss: 0/{total_prompt} tokens cached")
 
         return response.content
 
     async def astream_response(self, prompt: str) -> AsyncIterator[str]:
         """Async streaming генерация через LangChain astream."""
-        import time
-        t0 = time.perf_counter()
-        first_token = True
         async for chunk in self.chat_model.astream(prompt):
             if chunk.content:
-                if first_token:
-                    logger.info(f"⏱ LLM mini-prompt first token: {(time.perf_counter()-t0)*1000:.0f}ms")
-                    first_token = False
                 yield chunk.content
 
 
