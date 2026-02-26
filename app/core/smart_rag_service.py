@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any
 from app.models.session import ConversationSession
@@ -153,6 +154,9 @@ class SmartRAGService:
         def run_db(fn, *args):
             return loop.run_in_executor(db_executor, fn, *args)
 
+        t_start = time.perf_counter()
+        timings: dict = {}
+
         logger.info(f"🚀 Async Streamlined RAG v4.0: Processing query '{query[:50]}...'")
 
         # --- Setup (CPU only) ---
@@ -163,6 +167,7 @@ class SmartRAGService:
         quick_response = self._try_quick_response(query, detected_language)
         if quick_response is not None:
             logger.info("⚡ Quick response (pre-filter) - skipping LLM")
+            timings['pre_filter'] = f"{(time.perf_counter() - t_start)*1000:.0f}ms"
             analysis = QueryAnalysis(
                 detected_category=None,
                 is_search_query=False,
@@ -173,16 +178,21 @@ class SmartRAGService:
             )
             db_svc._update_session_streamlined(session, query, analysis, [])
             await self.session_manager.asave_session_with_backup(session)
-            return await run_db(
+            result = await run_db(
                 db_svc._build_streamlined_response,
                 analysis, [], session,
                 {"is_search_query": False, "reason": "quick_pre_filter"}
             )
+            timings['total'] = f"{(time.perf_counter() - t_start)*1000:.0f}ms"
+            logger.info(f"⏱ TIMINGS (quick_pre_filter): {timings}")
+            return result
 
         session_context = db_svc._build_session_context(session)
 
         # DB: get session strains for context
+        t_db0 = time.perf_counter()
         session_strains = await run_db(db_svc._get_session_strains, session)
+        timings['session_strains_db'] = f"{(time.perf_counter() - t_db0)*1000:.0f}ms"
 
         # Build analysis context (CPU)
         analysis_context = session_context.copy()
@@ -197,6 +207,7 @@ class SmartRAGService:
         logger.info(f"Context for LLM: strains={len(session_strains)}, recommended_strains={analysis_context['recommended_strains']}")
 
         # --- ASYNC LLM: Analysis (~1-2s, no thread) ---
+        t_analysis0 = time.perf_counter()
         try:
             analysis = await db_svc.streamlined_analyzer.aanalyze_query(
                 user_query=query,
@@ -204,8 +215,10 @@ class SmartRAGService:
                 found_strains=None,
                 explicit_language=detected_language
             )
+            timings['llm_analysis'] = f"{(time.perf_counter() - t_analysis0)*1000:.0f}ms"
             logger.info(f"Analysis: category={analysis.detected_category}, is_follow_up={analysis.is_follow_up}, language={analysis.detected_language}")
         except Exception as e:
+            timings['llm_analysis'] = f"{(time.perf_counter() - t_analysis0)*1000:.0f}ms (FAILED)"
             logger.error(f"Async streamlined analysis failed: {e}", exc_info=True)
             analysis = QueryAnalysis(
                 detected_category=None,
@@ -224,11 +237,14 @@ class SmartRAGService:
             logger.info("❌ Non-search query detected - returning text-only response")
             db_svc._update_session_streamlined(session, query, analysis, [])
             await self.session_manager.asave_session_with_backup(session)
-            return await run_db(
+            result = await run_db(
                 db_svc._build_streamlined_response,
                 analysis, [], session,
                 {"is_search_query": False, "reason": "greeting_or_general_question"}
             )
+            timings['total'] = f"{(time.perf_counter() - t_start)*1000:.0f}ms"
+            logger.info(f"⏱ TIMINGS (non_search): {timings}")
+            return result
 
         # --- Branch: follow-up (deterministic, CPU + DB for response building) ---
         # Override: "similar strains" after a specific-strain (1-result) context = new search
@@ -253,11 +269,14 @@ class SmartRAGService:
             analysis.natural_response = deterministic_response
             db_svc._update_session_streamlined(session, query, analysis, result_strains)
             await self.session_manager.asave_session_with_backup(session)
-            return await run_db(
+            result = await run_db(
                 db_svc._build_streamlined_response,
                 analysis, result_strains, session,
                 {"is_search_query": True, "is_follow_up": True, "deterministic_executor": True}
             )
+            timings['total'] = f"{(time.perf_counter() - t_start)*1000:.0f}ms"
+            logger.info(f"⏱ TIMINGS (follow_up): {timings}")
+            return result
 
         # --- Branch: specific strain (DB + async embedding fallback) ---
         if analysis.specific_strain_name:
@@ -345,7 +364,9 @@ class SmartRAGService:
 
             return candidates, filter_params
 
+        t_filter0 = time.perf_counter()
         candidates, filter_params = await run_db(_db_filter_phase)
+        timings['db_filter'] = f"{(time.perf_counter() - t_filter0)*1000:.0f}ms"
 
         # Handle no-candidates fallback (DB)
         fallback_used = False
@@ -378,19 +399,24 @@ class SmartRAGService:
             try:
                 # Check embedding cache first
                 from app.core.cache import cache_service
+                t_emb0 = time.perf_counter()
                 query_embedding = await cache_service.get_embedding(query)
                 if query_embedding is None:
                     query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
                     if not query_embedding or len(query_embedding) == 0:
                         raise ValueError("Empty embedding received from LLM")
                     await cache_service.set_embedding(query, query_embedding)
+                    timings['embedding'] = f"{(time.perf_counter() - t_emb0)*1000:.0f}ms (api)"
                 else:
+                    timings['embedding'] = f"{(time.perf_counter() - t_emb0)*1000:.0f}ms (cache_hit)"
                     logger.info("Embedding cache hit")
 
+                t_vec0 = time.perf_counter()
                 result_strains = await run_db(
                     db_svc.vector_search._search_with_embedding,
                     query_embedding, candidates, analysis.detected_language, 5
                 )
+                timings['vector_search'] = f"{(time.perf_counter() - t_vec0)*1000:.0f}ms"
                 logger.info(f"Vector search: {len(result_strains)} results")
             except Exception as e:
                 logger.error(f"Async vector search failed: {e}", exc_info=True)
@@ -409,13 +435,16 @@ class SmartRAGService:
                     }
                     for s in result_strains[:5]
                 ]
+                t_mini0 = time.perf_counter()
                 improved_response = await db_svc.streamlined_analyzer.agenerate_response_only(
                     query=query,
                     strains=strain_info,
                     language=detected_language
                 )
+                timings['llm_mini_prompt'] = f"{(time.perf_counter() - t_mini0)*1000:.0f}ms"
                 analysis.natural_response = improved_response
             except Exception as e:
+                timings['llm_mini_prompt'] = f"FAILED"
                 logger.warning(f"Async mini-prompt re-analysis failed: {e}")
 
         # Fallback notice
@@ -433,10 +462,13 @@ class SmartRAGService:
         await self.session_manager.asave_session_with_backup(session)
 
         # DB: Build response (needs DB for lazy-loaded relationships)
-        return await run_db(
+        result = await run_db(
             db_svc._build_streamlined_response,
             analysis, result_strains, session, filter_params
         )
+        timings['total'] = f"{(time.perf_counter() - t_start)*1000:.0f}ms"
+        logger.info(f"⏱ TIMINGS (main_search): {timings}")
+        return result
 
     async def aprocess_contextual_query_streaming(
         self,
