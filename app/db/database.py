@@ -19,7 +19,11 @@ def get_database_url():
 
 # Создаем движок для синхронной работы с БД (cannamente database)
 database_url = os.getenv('DATABASE_URL') or get_database_url()
-engine = create_engine(database_url)
+engine = create_engine(
+    database_url,
+    pool_pre_ping=True,   # silently reconnect on stale connections
+    pool_recycle=1800,    # recycle connections older than 30 min
+)
 
 # Создаем сессию
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
