@@ -230,6 +230,27 @@ class SmartRAGService:
                 {"is_search_query": False, "reason": "greeting_or_general_question"}
             )
 
+        # --- Context inheritance: "otras opciones" / "more options" ---
+        if (analysis.is_search_query and not analysis.is_follow_up
+                and session.last_search_context
+                and SmartRAGService._should_inherit_search_context(query, analysis)):
+            ctx = session.last_search_context
+            if ctx.get('detected_category'):
+                analysis.detected_category = ctx['detected_category']
+            if ctx.get('required_helps_with'):
+                analysis.required_helps_with = ctx['required_helps_with']
+            if ctx.get('required_effects'):
+                analysis.required_effects = ctx['required_effects']
+            if ctx.get('required_flavors'):
+                analysis.required_flavors = ctx['required_flavors']
+            if ctx.get('required_terpenes'):
+                analysis.required_terpenes = ctx['required_terpenes']
+            if ctx.get('thc_level'):
+                analysis.thc_level = ctx['thc_level']
+            if ctx.get('cbd_level'):
+                analysis.cbd_level = ctx['cbd_level']
+            logger.info(f"🔗 Search context inherited: {ctx}")
+
         # --- Branch: follow-up (deterministic, CPU + DB for response building) ---
         # Override: "similar strains" after a specific-strain (1-result) context = new search
         _similar_keywords = ("similar", "like this", "like these", "more like", "same kind", "alike")
@@ -545,6 +566,27 @@ class SmartRAGService:
                     yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
                     yield {"type": "done"}
                     return
+
+                # Context inheritance: "otras opciones" / "more options"
+                if (analysis.is_search_query and not analysis.is_follow_up
+                        and session.last_search_context
+                        and SmartRAGService._should_inherit_search_context(query, analysis)):
+                    ctx = session.last_search_context
+                    if ctx.get('detected_category'):
+                        analysis.detected_category = ctx['detected_category']
+                    if ctx.get('required_helps_with'):
+                        analysis.required_helps_with = ctx['required_helps_with']
+                    if ctx.get('required_effects'):
+                        analysis.required_effects = ctx['required_effects']
+                    if ctx.get('required_flavors'):
+                        analysis.required_flavors = ctx['required_flavors']
+                    if ctx.get('required_terpenes'):
+                        analysis.required_terpenes = ctx['required_terpenes']
+                    if ctx.get('thc_level'):
+                        analysis.thc_level = ctx['thc_level']
+                    if ctx.get('cbd_level'):
+                        analysis.cbd_level = ctx['cbd_level']
+                    logger.info(f"🔗 Search context inherited: {ctx}")
 
                 # Follow-up branch
                 # Override: "similar strains" after a specific-strain (1-result) context = new search
@@ -1117,6 +1159,32 @@ class SmartRAGService:
             logger.error(f"Failed to retrieve session strains: {e}")
             return []
 
+    @staticmethod
+    def _should_inherit_search_context(query: str, analysis: QueryAnalysis) -> bool:
+        """Return True if query is asking for more/alternative options without providing new criteria."""
+        import re
+        # If LLM already extracted specific criteria, no inheritance needed
+        if any([
+            analysis.required_helps_with,
+            analysis.required_effects,
+            analysis.required_flavors,
+            analysis.required_terpenes,
+            analysis.thc_level,
+            analysis.cbd_level,
+            analysis.detected_category,
+            analysis.specific_strain_name,
+        ]):
+            return False
+        _expand_re = re.compile(
+            r'\b(otras?\s+opciones?|more\s+options?|other\s+options?|m[aá]s\s+opciones?'
+            r'|alternativas?|alternatives?|algo\s+m[aá]s|something\s+else'
+            r'|dame\s+m[aá]s|show\s+me\s+more|hay\s+m[aá]s|are\s+there\s+more'
+            r'|m[aá]s\s+alternativas?|otras?\s+alternativas?'
+            r'|more\s+suggestions?|otras?\s+sugerencias?)\b',
+            re.IGNORECASE
+        )
+        return bool(_expand_re.search(query))
+
     def _update_session_streamlined(
         self,
         session: ConversationSession,
@@ -1135,6 +1203,26 @@ class SmartRAGService:
             strain_ids = [s.id for s in strains]
             session.add_strain_recommendation(strain_ids)
             logger.info(f"Added {len(strain_ids)} strains to session history")
+
+        # Save search context for "otras opciones" / "more options" inheritance
+        if analysis.is_search_query and strains:
+            search_ctx: Dict[str, Any] = {}
+            if analysis.detected_category:
+                search_ctx['detected_category'] = analysis.detected_category
+            if analysis.required_helps_with:
+                search_ctx['required_helps_with'] = analysis.required_helps_with
+            if analysis.required_effects:
+                search_ctx['required_effects'] = analysis.required_effects
+            if analysis.required_flavors:
+                search_ctx['required_flavors'] = analysis.required_flavors
+            if analysis.required_terpenes:
+                search_ctx['required_terpenes'] = analysis.required_terpenes
+            if analysis.thc_level:
+                search_ctx['thc_level'] = analysis.thc_level
+            if analysis.cbd_level:
+                search_ctx['cbd_level'] = analysis.cbd_level
+            if search_ctx:
+                session.last_search_context = search_ctx
 
         # Add conversation entry
         session.add_conversation_entry(
