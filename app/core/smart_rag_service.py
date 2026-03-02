@@ -266,12 +266,45 @@ class SmartRAGService:
                 logger.info("No follow_up_intent from LLM, using keyword detection")
                 intent = detect_follow_up_intent_keywords(query)
 
+            # Determine if executor can handle this intent precisely
+            # compare/sort by THC/CBD/CBG and select → deterministic (exact numbers)
+            # Everything else (describe, filter, semantic compare) → LLM mini-prompt
+            _numeric_fields = {"thc", "cbd", "cbg"}
+            _executor_is_precise = (
+                intent.action == "select"
+                or (intent.action in ("compare", "sort") and intent.field in _numeric_fields)
+            )
+            _use_llm_fallback = not _executor_is_precise
+
             result_strains, deterministic_response = db_svc.follow_up_executor.execute(
                 intent=intent,
                 session_strains=session_strains,
                 language=analysis.detected_language
             )
-            analysis.natural_response = deterministic_response
+
+            if _use_llm_fallback:
+                logger.info("🤖 Follow-up uses LLM fallback for semantic response")
+                try:
+                    strain_info = [
+                        {
+                            'name': s.name,
+                            'category': s.category,
+                            'thc': str(s.thc) if s.thc else 'N/A'
+                        }
+                        for s in result_strains[:5]
+                    ]
+                    llm_response = await db_svc.streamlined_analyzer.agenerate_response_only(
+                        query=query,
+                        strains=strain_info,
+                        language=analysis.detected_language
+                    )
+                    analysis.natural_response = llm_response
+                except Exception as e:
+                    logger.warning(f"LLM fallback for follow-up failed: {e}")
+                    analysis.natural_response = deterministic_response
+            else:
+                analysis.natural_response = deterministic_response
+
             db_svc._update_session_streamlined(session, query, analysis, result_strains)
             await self.session_manager.asave_session_with_backup(session)
             return await run_db(
@@ -601,10 +634,33 @@ class SmartRAGService:
                     intent = analysis.follow_up_intent
                     if not intent:
                         intent = detect_follow_up_intent_keywords(query)
+
+                    _numeric_fields = {"thc", "cbd", "cbg"}
+                    _executor_is_precise = (
+                        intent.action == "select"
+                        or (intent.action in ("compare", "sort") and intent.field in _numeric_fields)
+                    )
+                    _use_llm_fallback = not _executor_is_precise
+
                     result_strains, deterministic_response = db_svc.follow_up_executor.execute(
                         intent=intent, session_strains=session_strains, language=analysis.detected_language
                     )
-                    analysis.natural_response = deterministic_response
+
+                    if _use_llm_fallback:
+                        try:
+                            strain_info = [
+                                {'name': s.name, 'category': s.category, 'thc': str(s.thc) if s.thc else 'N/A'}
+                                for s in result_strains[:5]
+                            ]
+                            llm_response = await db_svc.streamlined_analyzer.agenerate_response_only(
+                                query=query, strains=strain_info, language=analysis.detected_language
+                            )
+                            analysis.natural_response = llm_response
+                        except Exception:
+                            analysis.natural_response = deterministic_response
+                    else:
+                        analysis.natural_response = deterministic_response
+
                     db_svc._update_session_streamlined(session, query, analysis, result_strains)
                     await self.session_manager.asave_session_with_backup(session)
                     response = await run_db(

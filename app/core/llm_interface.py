@@ -38,6 +38,16 @@ class LLMInterface(ABC):
         По умолчанию делегирует sync-версии."""
         return await asyncio.to_thread(self.generate_response_with_system, system_prompt, user_prompt)
 
+    def generate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
+        """Structured output generation. Returns Pydantic model or raw string (fallback).
+        Default: delegates to text generation (for MockLLM)."""
+        return self.generate_response_with_system(system_prompt, user_prompt)
+
+    async def agenerate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
+        """Async structured output generation. Returns Pydantic model or raw string (fallback).
+        Default: delegates to text generation (for MockLLM)."""
+        return await self.agenerate_response_with_system(system_prompt, user_prompt)
+
     async def astream_response(self, prompt: str) -> AsyncIterator[str]:
         """Async streaming генерация — yields chunks текста.
         По умолчанию возвращает полный ответ одним chunk."""
@@ -60,6 +70,12 @@ class OpenAILLM(LLMInterface):
             openai_api_key=api_key,
             temperature=self._get_agent_temperature()
         )
+        self.analysis_model = ChatOpenAI(
+            model=self._get_agent_model(),
+            openai_api_key=api_key,
+            temperature=self._get_analysis_temperature()
+        )
+        self._structured_cache = {}  # schema_class -> structured_model
 
     @staticmethod
     def _get_agent_model() -> str:
@@ -71,6 +87,13 @@ class OpenAILLM(LLMInterface):
             return float(os.getenv('AGENT_TEMPERATURE', '0.7'))
         except ValueError:
             return 0.7
+
+    @staticmethod
+    def _get_analysis_temperature() -> float:
+        try:
+            return float(os.getenv('ANALYSIS_TEMPERATURE', '0.2'))
+        except ValueError:
+            return 0.2
 
     def generate_embedding(self, text: str) -> List[float]:
         """Генерация эмбеддинга через OpenAI"""
@@ -95,19 +118,8 @@ class OpenAILLM(LLMInterface):
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
-        response = self.chat_model.invoke(messages)
-
-        # Log cached tokens if available in response metadata
-        if hasattr(response, 'response_metadata'):
-            token_usage = response.response_metadata.get('token_usage', {})
-            prompt_details = token_usage.get('prompt_tokens_details', {})
-            cached = prompt_details.get('cached_tokens', 0)
-            total_prompt = token_usage.get('prompt_tokens', 0)
-            if cached > 0:
-                logger.info(f"Prompt cache hit: {cached}/{total_prompt} tokens cached ({cached/total_prompt*100:.0f}%)")
-            elif total_prompt > 0:
-                logger.debug(f"Prompt cache miss: 0/{total_prompt} tokens cached")
-
+        response = self.analysis_model.invoke(messages)
+        self._log_cache_stats(response)
         return response.content
 
     async def agenerate_embedding(self, text: str) -> List[float]:
@@ -127,8 +139,18 @@ class OpenAILLM(LLMInterface):
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
-        response = await self.chat_model.ainvoke(messages)
+        response = await self.analysis_model.ainvoke(messages)
+        self._log_cache_stats(response)
+        return response.content
 
+    def _get_structured_model(self, output_schema: type):
+        """Get or create cached structured output model."""
+        if output_schema not in self._structured_cache:
+            self._structured_cache[output_schema] = self.analysis_model.with_structured_output(output_schema)
+        return self._structured_cache[output_schema]
+
+    def _log_cache_stats(self, response) -> None:
+        """Log prompt cache statistics from response metadata."""
         if hasattr(response, 'response_metadata'):
             token_usage = response.response_metadata.get('token_usage', {})
             prompt_details = token_usage.get('prompt_tokens_details', {})
@@ -139,7 +161,27 @@ class OpenAILLM(LLMInterface):
             elif total_prompt > 0:
                 logger.debug(f"Prompt cache miss: 0/{total_prompt} tokens cached")
 
-        return response.content
+    def generate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
+        """Structured output via OpenAI JSON schema — returns validated Pydantic model."""
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        structured_model = self._get_structured_model(output_schema)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+        return structured_model.invoke(messages)
+
+    async def agenerate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
+        """Async structured output via OpenAI JSON schema — returns validated Pydantic model."""
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        structured_model = self._get_structured_model(output_schema)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+        return await structured_model.ainvoke(messages)
 
     async def astream_response(self, prompt: str) -> AsyncIterator[str]:
         """Async streaming генерация через LangChain astream."""
