@@ -412,7 +412,7 @@ Response:"""
             logger.debug("ContextBuilder not available - using hardcoded taxonomy")
             return self._build_fallback_db_context()
 
-    def _analyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
+    def _analyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None):
         """Анализ через LLM с раздельными system/user промптами для prompt caching."""
 
         target_language = explicit_language or context.get("target_language", "es")
@@ -424,9 +424,11 @@ Response:"""
         user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
-            response = self.llm.generate_response_with_system(system_prompt, user_prompt)
-            result = self._extract_json_from_response(response)
-            return result
+            result = self.llm.generate_structured_response(system_prompt, user_prompt, QueryAnalysis)
+            if isinstance(result, QueryAnalysis):
+                return result
+            # Fallback for MockLLM (returns str)
+            return self._extract_json_from_response(result)
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
@@ -450,7 +452,7 @@ Analyze the user's query and provide:
    **is_search_query = FALSE** if user is:
    - Greeting: "hello", "hi", "hey", "hola", "buenos días"
    - Asking for help: "how can you help", "what can you do", "help me", "ayúdame"
-   - General questions: "what is cannabis", "how does THC work", "what are terpenes"
+   - General questions WITHOUT referencing recommended strains: "what is cannabis", "how does THC work", "what are terpenes"
    - Thanking: "thank you", "thanks", "gracias"
    - Chitchat: "how are you", "what's up", "¿cómo estás"
    - Out of domain: politics, weather, news, sports, etc.
@@ -460,8 +462,10 @@ Analyze the user's query and provide:
    - Describing needs: "for sleep", "for pain", "high thc", "para dormir", "relajante"
    - Asking about strains: "which strain", "what's good for", "cuál es el mejor"
    - Comparing strains: "which one has more THC", "difference between"
+   - Asking about a SPECIFIC previously recommended strain: "does that one have side effects?", "¿ese tiene efectos secundarios?", "tell me more about it"
 
    **IMPORTANT**: Default to TRUE if unclear. Only set FALSE for clear non-search queries.
+   **IMPORTANT**: If user references a previously recommended strain ("that one", "it", "ese", "the first one") and asks about its properties/effects/side effects, set is_search_query=TRUE and is_follow_up=TRUE.
 
 0.5. **Specific Strain Query Detection** (CRITICAL - determines if user asks about exact strain):
 
@@ -553,9 +557,11 @@ Analyze the user's query and provide:
    ✓ NO new search criteria introduced
 
    **is_follow_up = FALSE** if ANY:
-   ✗ User introduces NEW criteria (different category, new effects, new flavors)
+   ✗ User introduces NEW criteria (different category, new effects, new flavors, new terpenes)
    ✗ User requests NEW search (suggest/find/show/recommend with new parameters)
    ✗ User asks for "similar strains", "strains like this", "more like this", "other options similar to" → always new search
+   ✗ User introduces NEW attribute filters: "with myrcene", "with tropical flavor", "something sweet" → new search with those filters
+   ✗ User says "show me something with X" where X is a new criterion not in current results → new search
 
 5.5. **Follow-up Intent Extraction** (ONLY when is_follow_up=true):
    Extract structured intent for deterministic execution:
@@ -577,12 +583,11 @@ Analyze the user's query and provide:
    The system will use follow_up_intent to generate response deterministically.
    You can set natural_response to a placeholder like "Follow-up processed".
 
-6. **Natural Response** (for NEW searches only):
-   - Generate helpful, friendly response in the target language
-   - If strains are recommended, explain WHY they fit the request
-   - Mention 1-2 specific strains by name with brief explanation
-   - Keep response concise (2-3 sentences)
-   - Be conversational like a knowledgeable budtender
+6. **Natural Response**:
+   - If is_search_query=true AND specific_strain_name is null: set natural_response to "." (single dot placeholder — it will be regenerated later with actual strain data)
+   - If is_search_query=true AND specific_strain_name is set: generate a brief description of that strain (2-3 sentences)
+   - If is_search_query=false: generate helpful, friendly response in the target language (2-3 sentences)
+   - If is_follow_up=true: set natural_response to "Follow-up processed" (ignored by system)
 
 7. **Follow-up Suggestions**:
    - Suggest 2-3 relevant follow-up questions
@@ -638,15 +643,15 @@ Query: "hey, how can you help me"
 
 2. SEARCH with medical use:
 Query: "which strains help with pain?"
-{{"is_search_query": true, "is_follow_up": false, "detected_category": null, "required_helps_with": ["pain"], "natural_response": "For pain relief, I recommend indica strains with high THC or CBD options like ACDC.", "suggested_follow_ups": ["Indica or sativa?", "High CBD options?"], "confidence": 0.9}}
+{{"is_search_query": true, "is_follow_up": false, "detected_category": null, "required_helps_with": ["pain"], "natural_response": ".", "suggested_follow_ups": ["Indica or sativa?", "High CBD options?"], "confidence": 0.9}}
 
 3. SEARCH with multiple filters:
 Query: "suggest me indica with tropical flavor and high thc"
-{{"is_search_query": true, "is_follow_up": false, "detected_category": "Indica", "thc_level": "high", "required_flavors": ["tropical"], "natural_response": "I'll find you an indica with tropical flavors and high THC.", "suggested_follow_ups": ["Something sweeter?", "Help with sleep?"], "confidence": 0.95}}
+{{"is_search_query": true, "is_follow_up": false, "detected_category": "Indica", "thc_level": "high", "required_flavors": ["tropical"], "natural_response": ".", "suggested_follow_ups": ["Something sweeter?", "Help with sleep?"], "confidence": 0.95}}
 
 4. SPECIFIC STRAIN:
 Query: "tell me about Northern Lights"
-{{"is_search_query": true, "specific_strain_name": "Northern Lights", "is_follow_up": false, "natural_response": "Northern Lights is a classic indica with relaxing effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
+{{"is_search_query": true, "specific_strain_name": "Northern Lights", "is_follow_up": false, "natural_response": "Northern Lights is a classic indica known for its relaxing and sedating effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
 
 5. FOLLOW-UP (compare):
 Context: Recommended strains: Super Silver Haze (21% THC), Chocolope (22% THC)
@@ -656,7 +661,17 @@ Query: "which has higher THC"
 6. NOT FOLLOW-UP (new criteria):
 Context: Recommended strains: G13 (Indica), Truffle (Hybrid)
 Query: "now show me sativa strains for energy"
-{{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "detected_category": "Sativa", "required_effects": ["energetic"], "natural_response": "I'll find you energetic sativa strains.", "suggested_follow_ups": ["THC level?", "Flavor?"], "confidence": 0.95}}
+{{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "detected_category": "Sativa", "required_effects": ["energetic"], "natural_response": ".", "suggested_follow_ups": ["THC level?", "Flavor?"], "confidence": 0.95}}
+
+7. NOT FOLLOW-UP (new attribute = new search):
+Context: Recommended strains: Dolato (Indica, 20% THC), King Louis (Indica, 20% THC)
+Query: "show me something with myrcene terpene for pain"
+{{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "required_terpenes": ["myrcene"], "required_helps_with": ["pain"], "natural_response": ".", "suggested_follow_ups": ["Indica?", "High THC?"], "confidence": 0.9}}
+
+8. FOLLOW-UP (question about recommended strain):
+Context: Recommended strains: Gumbo (Indica), Bubba Kush (Indica, 18% THC)
+Query: "does that one have side effects?"
+{{"is_search_query": true, "is_follow_up": true, "follow_up_intent": {{"action": "describe"}}, "natural_response": "Follow-up processed", "suggested_follow_ups": ["Compare THC?", "Other options?"], "confidence": 0.9}}
 """
 
     def _get_user_prompt_template(self) -> str:
@@ -674,7 +689,7 @@ RECOMMENDED STRAINS: {recommended_strains}
 
 Respond with JSON only."""
 
-    async def _aanalyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None) -> Dict[str, Any]:
+    async def _aanalyze_with_llm(self, context: Dict[str, Any], explicit_language: Optional[str] = None):
         """Async version of _analyze_with_llm with separate system/user prompts for prompt caching."""
 
         target_language = explicit_language or context.get("target_language", "es")
@@ -686,9 +701,11 @@ Respond with JSON only."""
         user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
-            response = await self.llm.agenerate_response_with_system(system_prompt, user_prompt)
-            result = self._extract_json_from_response(response)
-            return result
+            result = await self.llm.agenerate_structured_response(system_prompt, user_prompt, QueryAnalysis)
+            if isinstance(result, QueryAnalysis):
+                return result
+            # Fallback for MockLLM (returns str)
+            return self._extract_json_from_response(result)
         except Exception as e:
             logger.error(f"Async LLM call failed: {e}")
             raise
@@ -711,9 +728,18 @@ Respond with JSON only."""
             logger.debug(f"LLM response: {response}")
             raise
 
-    def _parse_result(self, raw_result: Dict[str, Any], original_query: str, explicit_language: Optional[str] = None) -> QueryAnalysis:
+    def _parse_result(self, raw_result, original_query: str, explicit_language: Optional[str] = None) -> QueryAnalysis:
         """Парсинг и валидация результата LLM"""
 
+        # Fast path: structured output already returned a validated Pydantic model
+        if isinstance(raw_result, QueryAnalysis):
+            if explicit_language:
+                raw_result.detected_language = explicit_language
+            if raw_result.natural_response in (".", "Follow-up processed", ""):
+                raw_result.natural_response = "I can help you find the right strain."
+            return raw_result
+
+        # Fallback path: dict from MockLLM or legacy text parsing
         try:
             # Нормализация категории
             category = raw_result.get("detected_category")
@@ -816,6 +842,11 @@ Respond with JSON only."""
             # Use explicit language if provided, otherwise fallback to LLM result, then default to 'es'
             final_language = explicit_language or raw_result.get("detected_language", "es")
 
+            # Guard: placeholder natural_response from search queries
+            raw_response = raw_result.get("natural_response", "I can help you find the right strain.")
+            if raw_response in (".", "Follow-up processed", ""):
+                raw_response = "I can help you find the right strain."
+
             analysis = QueryAnalysis(
                 detected_category=category,
                 thc_level=thc_level,
@@ -829,7 +860,7 @@ Respond with JSON only."""
                 required_helps_with=required_helps_with,
                 exclude_negatives=exclude_negatives,
                 required_terpenes=required_terpenes,
-                natural_response=raw_result.get("natural_response", "I can help you find the right strain."),
+                natural_response=raw_response,
                 suggested_follow_ups=raw_result.get("suggested_follow_ups", []),
                 detected_language=final_language,
                 confidence=raw_result.get("confidence", 0.9)
