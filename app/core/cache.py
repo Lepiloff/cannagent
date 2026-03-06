@@ -90,6 +90,34 @@ class CacheService:
         except Exception:
             return False
     
+    def _analysis_cache_ttl(self) -> int:
+        return int(os.getenv('ANALYSIS_CACHE_TTL', '3600'))
+
+    async def get_analysis(self, cache_key: str) -> Optional[dict]:
+        """Get cached QueryAnalysis result."""
+        if not self.cache:
+            return None
+        try:
+            data = await self.cache.get(cache_key)
+            if data:
+                logger.debug("Analysis cache hit", key=cache_key[:30])
+                return data
+        except Exception as e:
+            logger.warning("Analysis cache get failed", error=str(e))
+        return None
+
+    async def set_analysis(self, cache_key: str, analysis_dict: dict) -> bool:
+        """Cache QueryAnalysis result."""
+        if not self.cache:
+            return False
+        try:
+            await self.cache.set(cache_key, analysis_dict, ttl=self._analysis_cache_ttl())
+            logger.debug("Analysis cached", key=cache_key[:30])
+            return True
+        except Exception as e:
+            logger.warning("Analysis cache set failed", error=str(e))
+            return False
+
     async def get_response(self, query: str, context: str) -> Optional[str]:
         """Get cached response for query and context."""
         cache_key = self._generate_cache_key("response", f"{query}:{context}")

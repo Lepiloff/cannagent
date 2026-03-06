@@ -1,0 +1,352 @@
+{
+  "version": "1.0",
+  "description": "Evaluation test cases for QueryAnalysis accuracy. Each case tests LLM analysis quality.",
+  "cases": [
+    {
+      "id": "greeting_en",
+      "query": "hey, how can you help me?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": false,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": 0,
+      "tags": ["intent", "non-search", "en"]
+    },
+    {
+      "id": "greeting_es",
+      "query": "hola, ¿qué puedes hacer?",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": false,
+        "is_follow_up": false,
+        "detected_language": "es"
+      },
+      "expected_strains": 0,
+      "tags": ["intent", "non-search", "es"]
+    },
+    {
+      "id": "thanks_en",
+      "query": "thank you!",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": false,
+        "is_follow_up": false
+      },
+      "expected_strains": 0,
+      "tags": ["intent", "non-search", "en"]
+    },
+    {
+      "id": "general_question",
+      "query": "what is cannabis?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": false,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": 0,
+      "tags": ["intent", "non-search", "en"]
+    },
+    {
+      "id": "search_indica_simple",
+      "query": "suggest me indica",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "en"]
+    },
+    {
+      "id": "search_sativa",
+      "query": "show me sativa strains",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Sativa",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "en"]
+    },
+    {
+      "id": "search_hybrid",
+      "query": "any good hybrid strains?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Hybrid",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "en"]
+    },
+    {
+      "id": "search_high_thc",
+      "query": "show me high thc strains",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "thc_level": "high",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "expected_filters": {"min_thc": 20},
+      "tags": ["search", "thc", "en"]
+    },
+    {
+      "id": "search_high_cbd",
+      "query": "I need high CBD strains for anxiety",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "cbd_level": "high",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "cbd", "medical", "en"]
+    },
+    {
+      "id": "search_indica_high_thc",
+      "query": "suggest me indica with high thc",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "thc_level": "high",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "expected_filters": {"category": "Indica", "min_thc": 20},
+      "tags": ["search", "category", "thc", "en"]
+    },
+    {
+      "id": "search_sleep_en",
+      "query": "I need something for sleep",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "expected_result_traits": {"feelings": ["Relaxed", "Sleepy"]},
+      "tags": ["search", "medical", "en"]
+    },
+    {
+      "id": "search_sleep_es",
+      "query": "necesito algo para dormir",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "medical", "es"]
+    },
+    {
+      "id": "search_pain_anxiety",
+      "query": "which strains help with pain and anxiety",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "expected_result_traits": {"helps_with": ["Pain", "Anxiety"]},
+      "tags": ["search", "medical", "en"]
+    },
+    {
+      "id": "search_tropical_flavor",
+      "query": "suggest me indica with tropical flavor and high thc",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "thc_level": "high",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "expected_filters": {"category": "Indica", "min_thc": 20},
+      "tags": ["search", "category", "thc", "flavor", "en"]
+    },
+    {
+      "id": "search_energy_sativa_es",
+      "query": "muéstrame sativas energéticas",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Sativa",
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "es"]
+    },
+    {
+      "id": "search_relax_semantic",
+      "query": "I want something to relax after work",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "expected_result_traits": {"feelings": ["Relaxed"]},
+      "tags": ["search", "semantic", "en"]
+    },
+    {
+      "id": "search_creative_focus",
+      "query": "something for creativity and focus",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "effects", "en"]
+    },
+    {
+      "id": "search_low_thc_beginner",
+      "query": "I'm a beginner, something mild please",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "thc", "en"]
+    },
+    {
+      "id": "specific_strain_northern_lights",
+      "query": "tell me about Northern Lights",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_name": "Northern Lights",
+        "detected_language": "en"
+      },
+      "expected_strains": 1,
+      "tags": ["specific_strain", "en"]
+    },
+    {
+      "id": "search_terpene_myrcene",
+      "query": "show me strains with myrcene for pain",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "terpene", "medical", "en"]
+    },
+    {
+      "id": "search_no_paranoia",
+      "query": "indica for relaxation without paranoia",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "negatives", "en"]
+    },
+    {
+      "id": "search_es_dolor_cbd",
+      "query": "necesito algo para el dolor con alto CBD",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "cbd_level": "high",
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "cbd", "medical", "es"]
+    },
+    {
+      "id": "non_search_weather",
+      "query": "what's the weather like today?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": false,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": 0,
+      "tags": ["intent", "non-search", "out-of-domain", "en"]
+    },
+    {
+      "id": "search_evening_relaxing",
+      "query": "dame algo relajante para la noche",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "semantic", "es"]
+    },
+    {
+      "id": "search_multi_filter",
+      "query": "indica with earthy flavor, high thc, good for insomnia",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "thc_level": "high",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "category", "thc", "flavor", "medical", "en"]
+    }
+  ]
+}

@@ -2,61 +2,83 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-class LLMInterface(ABC):
-    """Абстрактный интерфейс для LLM провайдеров"""
+# ---------------------------------------------------------------------------
+# Segregated interfaces (Interface Segregation Principle)
+# Consumers should depend only on the capability they actually use.
+# ---------------------------------------------------------------------------
+
+class EmbeddingProvider(ABC):
+    """Generate vector embeddings from text."""
 
     @abstractmethod
     def generate_embedding(self, text: str) -> List[float]:
-        """Генерация эмбеддинга для текста"""
         pass
+
+    async def agenerate_embedding(self, text: str) -> List[float]:
+        return await asyncio.to_thread(self.generate_embedding, text)
+
+
+class AnalysisProvider(ABC):
+    """Structured output generation for query analysis."""
+
+    def generate_structured_response(
+        self, system_prompt: str, user_prompt: str, output_schema: type
+    ) -> Any:
+        """Returns Pydantic model or raw string (fallback for MockLLM)."""
+        return self.generate_response_with_system(system_prompt, user_prompt)
+
+    async def agenerate_structured_response(
+        self, system_prompt: str, user_prompt: str, output_schema: type
+    ) -> Any:
+        return await self.agenerate_response_with_system(system_prompt, user_prompt)
+
+    def generate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
+        """System/user split for prompt caching. Default: concatenate."""
+        raise NotImplementedError
+
+    async def agenerate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
+        return await asyncio.to_thread(self.generate_response_with_system, system_prompt, user_prompt)
+
+
+class ResponseProvider(ABC):
+    """Natural language response generation and streaming."""
 
     @abstractmethod
     def generate_response(self, prompt: str) -> str:
-        """Генерация ответа на промпт"""
         pass
 
-    def generate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
-        """Генерация ответа с раздельными system/user промптами для prompt caching.
-        По умолчанию объединяет в один промпт (для MockLLM)."""
-        return self.generate_response(f"{system_prompt}\n\n{user_prompt}")
-
-    async def agenerate_embedding(self, text: str) -> List[float]:
-        """Async генерация эмбеддинга. По умолчанию делегирует sync-версии через thread pool."""
-        return await asyncio.to_thread(self.generate_embedding, text)
-
     async def agenerate_response(self, prompt: str) -> str:
-        """Async генерация ответа. По умолчанию делегирует sync-версии через thread pool."""
         return await asyncio.to_thread(self.generate_response, prompt)
 
-    async def agenerate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
-        """Async генерация с раздельными system/user промптами для prompt caching.
-        По умолчанию делегирует sync-версии."""
-        return await asyncio.to_thread(self.generate_response_with_system, system_prompt, user_prompt)
-
-    def generate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
-        """Structured output generation. Returns Pydantic model or raw string (fallback).
-        Default: delegates to text generation (for MockLLM)."""
-        return self.generate_response_with_system(system_prompt, user_prompt)
-
-    async def agenerate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
-        """Async structured output generation. Returns Pydantic model or raw string (fallback).
-        Default: delegates to text generation (for MockLLM)."""
-        return await self.agenerate_response_with_system(system_prompt, user_prompt)
-
     async def astream_response(self, prompt: str) -> AsyncIterator[str]:
-        """Async streaming генерация — yields chunks текста.
-        По умолчанию возвращает полный ответ одним chunk."""
         result = await self.agenerate_response(prompt)
         yield result
 
 
+# ---------------------------------------------------------------------------
+# Composite interface (backward compatible)
+# ---------------------------------------------------------------------------
+
+class LLMInterface(EmbeddingProvider, AnalysisProvider, ResponseProvider):
+    """Composite LLM interface — backward compatible.
+
+    Implementations provide all three capabilities.
+    New consumers should depend on the narrowest protocol they need:
+    - VectorSearchService -> EmbeddingProvider
+    - StreamlinedQueryAnalyzer -> AnalysisProvider + ResponseProvider
+    """
+
+    def generate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
+        return self.generate_response(f"{system_prompt}\n\n{user_prompt}")
+
+
 class OpenAILLM(LLMInterface):
-    """Реализация для OpenAI"""
+    """OpenAI implementation providing all three capabilities."""
 
     def __init__(self, api_key: str):
         from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -191,22 +213,19 @@ class OpenAILLM(LLMInterface):
 
 
 class MockLLM(LLMInterface):
-    """Мок для тестирования без OpenAI"""
-    
+    """Mock implementation for testing without OpenAI API key."""
+
     def generate_embedding(self, text: str) -> List[float]:
-        """Генерация фиктивного эмбеддинга"""
         import hashlib
         import random
-        
-        # Создаем детерминированный эмбеддинг на основе хеша текста
+
         hash_obj = hashlib.md5(text.encode())
         seed = int(hash_obj.hexdigest(), 16) % (2**32)
-        
+
         random.seed(seed)
         return [random.uniform(-1, 1) for _ in range(int(os.getenv('VECTOR_DIMENSION', '1536')))]
-    
+
     def generate_response(self, prompt: str) -> str:
-        """Генерация мок-ответа"""
         return (
             "Это мок-ответ от AI Budtender. "
             "Для полноценной работы настройте OPENAI_API_KEY в переменных окружения. "

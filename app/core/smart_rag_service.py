@@ -16,12 +16,14 @@ from app.models.schemas import (
 from app.models.database import Strain as StrainModel  # For direct DB queries
 from app.core.session_manager import get_session_manager
 from app.db.repository import StrainRepository
-from app.core.llm_interface import get_llm
+from app.core.llm_registry import get_llm_registry
 
 # Streamlined RAG v4.0 Components
 from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysis, FollowUpIntent
 from app.core.category_filter import FilterFactory, FilterChain
 from app.core.vector_search_service import VectorSearchService
+from app.core.cached_embedding import CachedEmbeddingProvider
+from app.core.cached_analyzer import CachedQueryAnalyzer
 
 # Deterministic Follow-up Executor (FIX-001)
 from app.core.follow_up_executor import FollowUpExecutor, detect_follow_up_intent_keywords
@@ -62,8 +64,9 @@ class SmartRAGService:
             self.follow_up_executor = None
             return
 
-        # Initialize Streamlined RAG v4.0 components
-        self.llm_interface = get_llm()
+        # Initialize via LLM Registry (supports per-purpose providers)
+        registry = get_llm_registry()
+        self.llm_interface = registry.get_default_llm()
 
         # Get ContextBuilder and FuzzyMatcher from taxonomy system (DB-Aware Architecture)
         context_builder = None
@@ -72,22 +75,58 @@ class SmartRAGService:
         if taxonomy_system:
             context_builder = taxonomy_system.context_builder
             fuzzy_matcher = taxonomy_system.fuzzy_matcher
-            logger.info("✅ Using ContextBuilder and FuzzyMatcher with DB taxonomy")
+            logger.info("Using ContextBuilder and FuzzyMatcher with DB taxonomy")
         else:
-            logger.warning("⚠️ Taxonomy system not initialized - using hardcoded taxonomy and ILIKE fallback")
+            logger.warning("Taxonomy system not initialized - using hardcoded taxonomy and ILIKE fallback")
 
-        self.streamlined_analyzer = StreamlinedQueryAnalyzer(
+        from app.core.cache import cache_service
+
+        _analyzer = StreamlinedQueryAnalyzer(
             self.llm_interface,
-            context_builder=context_builder
+            context_builder=context_builder,
+            analysis_provider=registry.get_analysis_provider(),
+            response_provider=registry.get_response_provider(),
         )
+        self.streamlined_analyzer = CachedQueryAnalyzer(_analyzer, cache_service)
         self.fuzzy_matcher = fuzzy_matcher
-        self.vector_search = VectorSearchService(self.llm_interface, repository.db)
+
+        # Wrap embedding provider with transparent cache
+        cached_embedding = CachedEmbeddingProvider(
+            registry.get_embedding_provider(), cache_service
+        )
+        self.vector_search = VectorSearchService(cached_embedding, repository.db)
         self.filter_factory = FilterFactory()
 
         # FIX-001: Deterministic follow-up executor (eliminates hallucinations)
         self.follow_up_executor = FollowUpExecutor()
 
-        logger.info("🚀 Streamlined RAG v4.0 initialized with deterministic follow-up executor")
+        logger.info("Streamlined RAG v4.0 initialized with LLM Registry + cached embeddings")
+
+    @staticmethod
+    def _build_strain_info(strains, limit: int = 5) -> list:
+        """Build enriched strain info dicts for mini-prompt response generation."""
+        info = []
+        for s in strains[:limit]:
+            d = {
+                'name': s.name,
+                'category': s.category or '?',
+                'thc': str(s.thc) if s.thc else 'N/A',
+            }
+            # Enrich with loaded relationships (available after joinedload)
+            if hasattr(s, 'flavors') and s.flavors:
+                d['flavors'] = '/'.join(
+                    getattr(f, 'name', '') for f in s.flavors[:3]
+                )
+            if hasattr(s, 'feelings') and s.feelings:
+                d['effects'] = '/'.join(
+                    getattr(f, 'name', '') for f in s.feelings[:3]
+                )
+            if hasattr(s, 'helps_with') and s.helps_with:
+                d['helps_with'] = '/'.join(
+                    getattr(h, 'name', '') for h in s.helps_with[:3]
+                )
+            info.append(d)
+        return info
 
     async def aprocess_contextual_query(
         self,
@@ -285,14 +324,7 @@ class SmartRAGService:
             if _use_llm_fallback:
                 logger.info("🤖 Follow-up uses LLM fallback for semantic response")
                 try:
-                    strain_info = [
-                        {
-                            'name': s.name,
-                            'category': s.category,
-                            'thc': str(s.thc) if s.thc else 'N/A'
-                        }
-                        for s in result_strains[:5]
-                    ]
+                    strain_info = self._build_strain_info(result_strains)
                     llm_response = await db_svc.streamlined_analyzer.agenerate_response_only(
                         query=query,
                         strains=strain_info,
@@ -427,19 +459,12 @@ class SmartRAGService:
 
                 candidates = await run_db(_fallback_candidates)
 
-        # ASYNC: Vector search — async embedding (with cache) + DB distance calculation
+        # ASYNC: Vector search — embedding (cached via CachedEmbeddingProvider) + DB distance
         if candidates:
             try:
-                # Check embedding cache first
-                from app.core.cache import cache_service
-                query_embedding = await cache_service.get_embedding(query)
-                if query_embedding is None:
-                    query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
-                    if not query_embedding or len(query_embedding) == 0:
-                        raise ValueError("Empty embedding received from LLM")
-                    await cache_service.set_embedding(query, query_embedding)
-                else:
-                    logger.info("Embedding cache hit")
+                query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
+                if not query_embedding or len(query_embedding) == 0:
+                    raise ValueError("Empty embedding received from LLM")
 
                 result_strains = await run_db(
                     db_svc.vector_search._search_with_embedding,
@@ -455,14 +480,7 @@ class SmartRAGService:
         # ASYNC LLM: Response generation with real strain names (~0.5-1s, no thread)
         if result_strains:
             try:
-                strain_info = [
-                    {
-                        'name': s.name,
-                        'category': s.category,
-                        'thc': str(s.thc) if s.thc else 'N/A'
-                    }
-                    for s in result_strains[:5]
-                ]
+                strain_info = self._build_strain_info(result_strains)
                 improved_response = await db_svc.streamlined_analyzer.agenerate_response_only(
                     query=query,
                     strains=strain_info,
@@ -648,10 +666,7 @@ class SmartRAGService:
 
                     if _use_llm_fallback:
                         try:
-                            strain_info = [
-                                {'name': s.name, 'category': s.category, 'thc': str(s.thc) if s.thc else 'N/A'}
-                                for s in result_strains[:5]
-                            ]
+                            strain_info = self._build_strain_info(result_strains)
                             llm_response = await db_svc.streamlined_analyzer.agenerate_response_only(
                                 query=query, strains=strain_info, language=analysis.detected_language
                             )
@@ -752,14 +767,10 @@ class SmartRAGService:
                         return db_svc.repository.db.query(StrainModel).filter(StrainModel.active == True).all()
                     candidates = await run_db(_fallback)
 
-                # Vector search
+                # Vector search (embedding cached via CachedEmbeddingProvider)
                 if candidates:
                     try:
-                        from app.core.cache import cache_service
-                        query_embedding = await cache_service.get_embedding(query)
-                        if query_embedding is None:
-                            query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
-                            await cache_service.set_embedding(query, query_embedding)
+                        query_embedding = await db_svc.vector_search.llm.agenerate_embedding(query)
                         result_strains = await run_db(
                             db_svc.vector_search._search_with_embedding,
                             query_embedding, candidates, analysis.detected_language, 5
@@ -803,10 +814,7 @@ class SmartRAGService:
                 # Stream the natural language response and accumulate for session history.
                 full_response = ""
                 if result_strains:
-                    strain_info = [
-                        {'name': s.name, 'category': s.category, 'thc': str(s.thc) if s.thc else 'N/A'}
-                        for s in result_strains[:5]
-                    ]
+                    strain_info = self._build_strain_info(result_strains)
                     if fallback_notice:
                         yield {"type": "response_chunk", "text": fallback_notice}
                         full_response += fallback_notice
