@@ -86,6 +86,7 @@ class SmartRAGService:
             context_builder=context_builder,
             analysis_provider=registry.get_analysis_provider(),
             response_provider=registry.get_response_provider(),
+            prompt_strategy=registry.get_prompt_strategy(),
         )
         self.streamlined_analyzer = CachedQueryAnalyzer(_analyzer, cache_service)
         self.fuzzy_matcher = fuzzy_matcher

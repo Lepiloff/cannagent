@@ -212,6 +212,69 @@ class OpenAILLM(LLMInterface):
                 yield chunk.content
 
 
+class GroqLLM(AnalysisProvider, ResponseProvider):
+    """Groq implementation — analysis + response only (no embeddings).
+
+    Uses ChatGroq with with_structured_output for analysis.
+    No prompt caching on Groq side — use GroqPromptStrategy for compact prompts.
+    """
+
+    def __init__(self, api_key: str):
+        from langchain_groq import ChatGroq
+
+        model = os.getenv('GROQ_ANALYSIS_MODEL', 'llama-3.3-70b-versatile')
+        temperature = float(os.getenv('ANALYSIS_TEMPERATURE', '0.2'))
+
+        self._model = ChatGroq(
+            model=model,
+            groq_api_key=api_key,
+            temperature=temperature,
+        )
+        self._structured_cache = {}
+
+    def _get_structured_model(self, output_schema: type):
+        if output_schema not in self._structured_cache:
+            self._structured_cache[output_schema] = self._model.with_structured_output(output_schema)
+        return self._structured_cache[output_schema]
+
+    # -- AnalysisProvider --
+
+    def generate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
+        from langchain_core.messages import SystemMessage, HumanMessage
+        structured = self._get_structured_model(output_schema)
+        return structured.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+
+    async def agenerate_structured_response(self, system_prompt: str, user_prompt: str, output_schema: type):
+        from langchain_core.messages import SystemMessage, HumanMessage
+        structured = self._get_structured_model(output_schema)
+        return await structured.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+
+    def generate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        response = self._model.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        return response.content
+
+    async def agenerate_response_with_system(self, system_prompt: str, user_prompt: str) -> str:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        response = await self._model.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        return response.content
+
+    # -- ResponseProvider --
+
+    def generate_response(self, prompt: str) -> str:
+        response = self._model.invoke(prompt)
+        return response.content
+
+    async def agenerate_response(self, prompt: str) -> str:
+        response = await self._model.ainvoke(prompt)
+        return response.content
+
+    async def astream_response(self, prompt: str) -> AsyncIterator[str]:
+        async for chunk in self._model.astream(prompt):
+            if chunk.content:
+                yield chunk.content
+
+
 class MockLLM(LLMInterface):
     """Mock implementation for testing without OpenAI API key."""
 

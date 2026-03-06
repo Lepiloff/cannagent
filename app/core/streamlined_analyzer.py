@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, List, TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, validator
 from app.core.llm_interface import LLMInterface, AnalysisProvider, ResponseProvider
+from app.core.prompt_strategy import PromptStrategy, OpenAIPromptStrategy
 
 if TYPE_CHECKING:
     from app.core.context_builder import ContextBuilder
@@ -116,6 +117,7 @@ class StreamlinedQueryAnalyzer:
         *,
         analysis_provider: Optional[AnalysisProvider] = None,
         response_provider: Optional[ResponseProvider] = None,
+        prompt_strategy: Optional[PromptStrategy] = None,
     ):
         """
         Args:
@@ -123,11 +125,13 @@ class StreamlinedQueryAnalyzer:
             context_builder: Context builder with DB taxonomy (optional)
             analysis_provider: Override for structured analysis (optional)
             response_provider: Override for response generation (optional)
+            prompt_strategy: Override for system prompt template (optional, default OpenAI)
         """
         self.llm = llm_interface
         self._analysis = analysis_provider or llm_interface
         self._response = response_provider or llm_interface
         self.context_builder = context_builder
+        self._prompt_strategy: PromptStrategy = prompt_strategy or OpenAIPromptStrategy()
 
         if not context_builder:
             logger.warning(
@@ -438,7 +442,7 @@ Response:"""
         db_context_section = self._build_db_context_section(context, target_language)
 
         # Build separate system (static, cached) and user (variable) prompts
-        system_prompt = self._get_system_prompt_template().format(db_context=db_context_section)
+        system_prompt = self._prompt_strategy.get_system_prompt_template().format(db_context=db_context_section)
         user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
@@ -715,7 +719,7 @@ Respond with JSON only."""
         db_context_section = self._build_db_context_section(context, target_language)
 
         # Build separate system (static, cached) and user (variable) prompts
-        system_prompt = self._get_system_prompt_template().format(db_context=db_context_section)
+        system_prompt = self._prompt_strategy.get_system_prompt_template().format(db_context=db_context_section)
         user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
