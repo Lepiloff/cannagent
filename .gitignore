@@ -162,5 +162,7 @@ Thumbs.db
 
 # Private documentation
 *.md
+/CLAUDE.md
+/private_docs/README.md
 
 .claude/
