@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -421,6 +422,99 @@ def save_report(report: EvalReport, output_path: str):
 
 
 # ---------------------------------------------------------------------------
+# Direct evaluation (no API required — uses LLMRegistry directly)
+# ---------------------------------------------------------------------------
+
+async def evaluate_case_direct(case: Dict, analyzer) -> CaseResult:
+    """Evaluate a single case by calling StreamlinedQueryAnalyzer directly.
+
+    Only checks analysis fields (is_search_query, detected_category, etc.).
+    Skips strain count / result trait / filter checks (those need the DB pipeline).
+    """
+    case_id = case["id"]
+    query = case["query"]
+    language = case.get("language", "en")
+    expected = case.get("expected", {})
+    tags = case.get("tags", [])
+    session_context = case.get("session_context")
+
+    start = time.time()
+    try:
+        analysis = await analyzer.aanalyze_query(
+            user_query=query,
+            session_context=session_context,
+            explicit_language=language,
+        )
+        latency_ms = (time.time() - start) * 1000
+    except Exception as e:
+        return CaseResult(
+            case_id=case_id, query=query, language=language, tags=tags,
+            passed=False, latency_ms=(time.time() - start) * 1000,
+            error=str(e)
+        )
+
+    direct_fields = [
+        "is_search_query", "is_follow_up", "detected_language",
+        "detected_category", "thc_level", "cbd_level", "specific_strain_name",
+    ]
+    field_results = []
+    for fname in direct_fields:
+        if fname in expected:
+            actual = getattr(analysis, fname, None)
+            fr = FieldResult(fname, expected[fname], actual,
+                             check_field(expected[fname], actual))
+            field_results.append(fr)
+
+    overall = all(fr.passed for fr in field_results)
+    return CaseResult(
+        case_id=case_id, query=query, language=language, tags=tags,
+        passed=overall, field_results=field_results,
+        latency_ms=latency_ms
+    )
+
+
+async def run_direct(cases: List[Dict], runs: int) -> List[CaseResult]:
+    """Run all cases directly against the analyzer (no API)."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+    # Load .env so OPENAI_API_KEY / GROQ_API_KEY are available
+    try:
+        from dotenv import load_dotenv
+        env_path = Path(__file__).parent.parent.parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+    except ImportError:
+        pass
+
+    from app.core.llm_registry import get_llm_registry
+    from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer
+
+    registry = get_llm_registry()
+    analyzer = StreamlinedQueryAnalyzer(
+        registry.get_default_llm(),
+        analysis_provider=registry.get_analysis_provider(),
+        response_provider=registry.get_response_provider(),
+        prompt_strategy=registry.get_prompt_strategy(),
+    )
+
+    provider_name = os.getenv("ANALYSIS_LLM_PROVIDER", "openai")
+    model = os.getenv("GROQ_ANALYSIS_MODEL" if provider_name == "groq" else "OPENAI_AGENT_MODEL",
+                      "llama-3.3-70b-versatile" if provider_name == "groq" else "gpt-4o-mini")
+    print(f"{GREEN}Direct mode — provider: {provider_name}, model: {model}, "
+          f"strategy: {type(analyzer._prompt_strategy).__name__}{RESET}")
+
+    all_results = []
+    for run_idx in range(runs):
+        if runs > 1:
+            print(f"{DIM}--- Run {run_idx + 1}/{runs} ---{RESET}")
+        for case in cases:
+            result = await evaluate_case_direct(case, analyzer)
+            all_results.append(result)
+    return all_results
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -431,20 +525,9 @@ def main():
     parser.add_argument("--runs", type=int, default=1, help="Number of runs per case (for latency stats)")
     parser.add_argument("--output", help="Save JSON report to file")
     parser.add_argument("--api-url", default=API_BASE_URL, help="API base URL")
+    parser.add_argument("--direct", action="store_true",
+                        help="Run without API: call analyzer directly (set ANALYSIS_LLM_PROVIDER + GROQ_API_KEY for Groq)")
     args = parser.parse_args()
-
-    api_base = args.api_url
-    # Update module-level endpoint used by send_query
-    global API_ENDPOINT
-    API_ENDPOINT = f"{api_base}/api/v1/chat/ask/"
-
-    # Check API
-    try:
-        requests.get(f"{api_base}/", timeout=5)
-        print(f"{GREEN}API reachable at {api_base}{RESET}")
-    except requests.exceptions.RequestException:
-        print(f"{RED}Cannot reach API at {api_base}{RESET}")
-        sys.exit(1)
 
     # Load test cases
     with open(TEST_CASES_PATH) as f:
@@ -465,14 +548,26 @@ def main():
 
     print(f"\nRunning {len(cases)} test cases ({args.runs} run(s) each)...\n")
 
-    # Run evaluation
-    all_results = []
-    for run_idx in range(args.runs):
-        if args.runs > 1:
-            print(f"{DIM}--- Run {run_idx + 1}/{args.runs} ---{RESET}")
-        for case in cases:
-            result = evaluate_case(case)
-            all_results.append(result)
+    if args.direct:
+        all_results = asyncio.run(run_direct(cases, args.runs))
+    else:
+        api_base = args.api_url
+        global API_ENDPOINT
+        API_ENDPOINT = f"{api_base}/api/v1/chat/ask/"
+
+        try:
+            requests.get(f"{api_base}/", timeout=5)
+            print(f"{GREEN}API reachable at {api_base}{RESET}")
+        except requests.exceptions.RequestException:
+            print(f"{RED}Cannot reach API at {api_base}{RESET}")
+            sys.exit(1)
+
+        all_results = []
+        for run_idx in range(args.runs):
+            if args.runs > 1:
+                print(f"{DIM}--- Run {run_idx + 1}/{args.runs} ---{RESET}")
+            for case in cases:
+                all_results.append(evaluate_case(case))
 
     report = build_report(all_results)
     print_report(report)
