@@ -19,7 +19,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.models.database import Strain as StrainModel
-from app.core.llm_interface import LLMInterface
+from app.core.llm_interface import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,13 @@ class VectorSearchService:
     in a single SQL query instead of one query per strain.
     """
 
-    def __init__(self, llm_interface: LLMInterface, db_session: Session):
+    def __init__(self, embedding_provider: EmbeddingProvider, db_session: Session):
         """
         Args:
-            llm_interface: LLM interface for generating query embeddings
+            embedding_provider: Provider for generating query embeddings
             db_session: SQLAlchemy database session
         """
-        self.llm = llm_interface
+        self.llm = embedding_provider  # kept as .llm for backward compat
         self.db = db_session
 
     def search(

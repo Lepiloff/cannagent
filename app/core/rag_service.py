@@ -7,7 +7,7 @@ import structlog
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from app.core.llm_interface import LLMInterface
+from app.core.llm_interface import EmbeddingProvider
 from app.db.repository import StrainRepository
 from app.models.database import Strain as StrainModel
 
@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 class RAGService:
     """Service for generating and managing strain embeddings"""
 
-    def __init__(self, repository: StrainRepository, llm: LLMInterface):
+    def __init__(self, repository: StrainRepository, llm: EmbeddingProvider):
         self.repository = repository
         self.llm = llm
 

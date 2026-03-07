@@ -1,0 +1,791 @@
+{
+  "total": 25,
+  "passed": 25,
+  "failed": 0,
+  "errors": 0,
+  "pass_rate": 100.0,
+  "field_accuracy": {
+    "is_search_query": {
+      "correct": 25,
+      "total": 25,
+      "accuracy": 100.0
+    },
+    "is_follow_up": {
+      "correct": 25,
+      "total": 25,
+      "accuracy": 100.0
+    },
+    "detected_language": {
+      "correct": 24,
+      "total": 24,
+      "accuracy": 100.0
+    },
+    "detected_category": {
+      "correct": 9,
+      "total": 9,
+      "accuracy": 100.0
+    },
+    "thc_level": {
+      "correct": 4,
+      "total": 4,
+      "accuracy": 100.0
+    },
+    "cbd_level": {
+      "correct": 2,
+      "total": 2,
+      "accuracy": 100.0
+    },
+    "specific_strain_name": {
+      "correct": 1,
+      "total": 1,
+      "accuracy": 100.0
+    }
+  },
+  "latency": {
+    "avg_ms": 3295.0,
+    "p50_ms": 2502.3,
+    "p95_ms": 7830.0
+  },
+  "cases": [
+    {
+      "id": "greeting_en",
+      "passed": true,
+      "latency_ms": 2512.5,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "greeting_es",
+      "passed": true,
+      "latency_ms": 4.1,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "es",
+          "actual": "es",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "thanks_en",
+      "passed": true,
+      "latency_ms": 2.1,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "general_question",
+      "passed": true,
+      "latency_ms": 2.1,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_indica_simple",
+      "passed": true,
+      "latency_ms": 2502.3,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Indica",
+          "actual": "Indica",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_sativa",
+      "passed": true,
+      "latency_ms": 1992.7,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Sativa",
+          "actual": "Sativa",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_hybrid",
+      "passed": true,
+      "latency_ms": 4814.8,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Hybrid",
+          "actual": "Hybrid",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_high_thc",
+      "passed": true,
+      "latency_ms": 1628.9,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "thc_level",
+          "expected": "min_thc=20",
+          "actual": "min_thc=20",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_high_cbd",
+      "passed": true,
+      "latency_ms": 5018.2,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "cbd_level",
+          "expected": "min_cbd=7",
+          "actual": "min_cbd=7",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_indica_high_thc",
+      "passed": true,
+      "latency_ms": 1951.0,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Indica",
+          "actual": "Indica",
+          "passed": true
+        },
+        {
+          "field": "thc_level",
+          "expected": "min_thc=20",
+          "actual": "min_thc=20",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_sleep_en",
+      "passed": true,
+      "latency_ms": 1664.4,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_sleep_es",
+      "passed": true,
+      "latency_ms": 1803.3,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "es",
+          "actual": "es",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_pain_anxiety",
+      "passed": true,
+      "latency_ms": 1860.1,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_tropical_flavor",
+      "passed": true,
+      "latency_ms": 1731.0,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Indica",
+          "actual": "Indica",
+          "passed": true
+        },
+        {
+          "field": "thc_level",
+          "expected": "min_thc=20",
+          "actual": "min_thc=20",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_energy_sativa_es",
+      "passed": true,
+      "latency_ms": 2357.1,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Sativa",
+          "actual": "Sativa",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "es",
+          "actual": "es",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_relax_semantic",
+      "passed": true,
+      "latency_ms": 1873.7,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_creative_focus",
+      "passed": true,
+      "latency_ms": 4992.0,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_low_thc_beginner",
+      "passed": true,
+      "latency_ms": 4737.2,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "specific_strain_northern_lights",
+      "passed": true,
+      "latency_ms": 4115.2,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        },
+        {
+          "field": "specific_strain_name",
+          "expected": "Northern Lights",
+          "actual": "Northern Lights",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_terpene_myrcene",
+      "passed": true,
+      "latency_ms": 6298.4,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_no_paranoia",
+      "passed": true,
+      "latency_ms": 9684.5,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Indica",
+          "actual": "Indica",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_es_dolor_cbd",
+      "passed": true,
+      "latency_ms": 5239.0,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "cbd_level",
+          "expected": "min_cbd=7",
+          "actual": "min_cbd=7",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "es",
+          "actual": "es",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "non_search_weather",
+      "passed": true,
+      "latency_ms": 2801.2,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_evening_relaxing",
+      "passed": true,
+      "latency_ms": 4960.0,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Indica",
+          "actual": "Indica",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "es",
+          "actual": "es",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "search_multi_filter",
+      "passed": true,
+      "latency_ms": 7830.0,
+      "error": null,
+      "field_results": [
+        {
+          "field": "is_search_query",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "field": "is_follow_up",
+          "expected": false,
+          "actual": false,
+          "passed": true
+        },
+        {
+          "field": "detected_category",
+          "expected": "Indica",
+          "actual": "Indica",
+          "passed": true
+        },
+        {
+          "field": "thc_level",
+          "expected": "min_thc=20",
+          "actual": "min_thc=20",
+          "passed": true
+        },
+        {
+          "field": "detected_language",
+          "expected": "en",
+          "actual": "en",
+          "passed": true
+        }
+      ]
+    }
+  ]
+}

@@ -15,7 +15,8 @@ import logging
 from typing import Optional, Dict, Any, List, TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, validator
-from app.core.llm_interface import LLMInterface
+from app.core.llm_interface import LLMInterface, AnalysisProvider, ResponseProvider
+from app.core.prompt_strategy import PromptStrategy, OpenAIPromptStrategy
 
 if TYPE_CHECKING:
     from app.core.context_builder import ContextBuilder
@@ -112,15 +113,25 @@ class StreamlinedQueryAnalyzer:
     def __init__(
         self,
         llm_interface: LLMInterface,
-        context_builder: Optional["ContextBuilder"] = None
+        context_builder: Optional["ContextBuilder"] = None,
+        *,
+        analysis_provider: Optional[AnalysisProvider] = None,
+        response_provider: Optional[ResponseProvider] = None,
+        prompt_strategy: Optional[PromptStrategy] = None,
     ):
         """
         Args:
-            llm_interface: LLM interface for query analysis
-            context_builder: Context builder with DB taxonomy (optional for graceful degradation)
+            llm_interface: Composite LLM interface (backward compatible)
+            context_builder: Context builder with DB taxonomy (optional)
+            analysis_provider: Override for structured analysis (optional)
+            response_provider: Override for response generation (optional)
+            prompt_strategy: Override for system prompt template (optional, default OpenAI)
         """
         self.llm = llm_interface
+        self._analysis = analysis_provider or llm_interface
+        self._response = response_provider or llm_interface
         self.context_builder = context_builder
+        self._prompt_strategy: PromptStrategy = prompt_strategy or OpenAIPromptStrategy()
 
         if not context_builder:
             logger.warning(
@@ -160,7 +171,7 @@ Write 2-3 sentences recommending these strains. Mention 1-2 by their exact name.
 Response:"""
 
         try:
-            response = self.llm.generate_response(prompt)
+            response = self._response.generate_response(prompt)
             response = response.strip()
             if response.startswith('"') and response.endswith('"'):
                 response = response[1:-1]
@@ -202,7 +213,7 @@ Write 2-3 sentences recommending these strains. Mention 1-2 by their exact name.
 Response:"""
 
         try:
-            response = await self.llm.agenerate_response(prompt)
+            response = await self._response.agenerate_response(prompt)
             response = response.strip()
             if response.startswith('"') and response.endswith('"'):
                 response = response[1:-1]
@@ -218,10 +229,21 @@ Response:"""
 
     def _build_mini_prompt(self, query: str, strains: List[Dict[str, Any]], language: str) -> str:
         """Build the mini-prompt for response generation (shared by sync/async/streaming)."""
-        strain_info = ", ".join([
-            f"{s.get('name', '?')} ({s.get('category', '?')}, {s.get('thc', '?')}% THC)"
-            for s in strains[:5]
-        ])
+        parts = []
+        for s in strains[:5]:
+            desc = f"{s.get('name', '?')} ({s.get('category', '?')}, {s.get('thc', '?')}% THC"
+            extras = []
+            if s.get('flavors'):
+                extras.append(f"flavors: {s['flavors']}")
+            if s.get('effects'):
+                extras.append(f"effects: {s['effects']}")
+            if s.get('helps_with'):
+                extras.append(f"helps: {s['helps_with']}")
+            if extras:
+                desc += ", " + ", ".join(extras)
+            desc += ")"
+            parts.append(desc)
+        strain_info = ", ".join(parts)
         if language == "es":
             return f"""Eres un budtender experto. Genera una respuesta breve.
 Consulta: "{query}"
@@ -246,7 +268,7 @@ Response:"""
         """Streaming version of agenerate_response_only — yields text chunks."""
         prompt = self._build_mini_prompt(query, strains, language)
         try:
-            async for chunk in self.llm.astream_response(prompt):
+            async for chunk in self._response.astream_response(prompt):
                 yield chunk
         except Exception as e:
             logger.warning(f"Streaming mini-prompt failed: {e}")
@@ -420,11 +442,11 @@ Response:"""
         db_context_section = self._build_db_context_section(context, target_language)
 
         # Build separate system (static, cached) and user (variable) prompts
-        system_prompt = self._get_system_prompt_template().format(db_context=db_context_section)
+        system_prompt = self._prompt_strategy.get_system_prompt_template().format(db_context=db_context_section)
         user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
-            result = self.llm.generate_structured_response(system_prompt, user_prompt, QueryAnalysis)
+            result = self._analysis.generate_structured_response(system_prompt, user_prompt, QueryAnalysis)
             if isinstance(result, QueryAnalysis):
                 return result
             # Fallback for MockLLM (returns str)
@@ -697,11 +719,11 @@ Respond with JSON only."""
         db_context_section = self._build_db_context_section(context, target_language)
 
         # Build separate system (static, cached) and user (variable) prompts
-        system_prompt = self._get_system_prompt_template().format(db_context=db_context_section)
+        system_prompt = self._prompt_strategy.get_system_prompt_template().format(db_context=db_context_section)
         user_prompt = self._get_user_prompt_template().format(**context)
 
         try:
-            result = await self.llm.agenerate_structured_response(system_prompt, user_prompt, QueryAnalysis)
+            result = await self._analysis.agenerate_structured_response(system_prompt, user_prompt, QueryAnalysis)
             if isinstance(result, QueryAnalysis):
                 return result
             # Fallback for MockLLM (returns str)
