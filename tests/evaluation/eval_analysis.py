@@ -498,7 +498,8 @@ async def run_direct(cases: List[Dict], runs: int) -> List[CaseResult]:
         prompt_strategy=registry.get_prompt_strategy(),
     )
 
-    provider_name = os.getenv("ANALYSIS_LLM_PROVIDER", "openai")
+    provider_env = (os.getenv("ANALYSIS_LLM_PROVIDER") or "").strip().lower()
+    provider_name = provider_env if provider_env in {"groq", "openai"} else "openai"
     model = os.getenv("GROQ_ANALYSIS_MODEL" if provider_name == "groq" else "OPENAI_AGENT_MODEL",
                       "llama-3.3-70b-versatile" if provider_name == "groq" else "gpt-4o-mini")
     print(f"{GREEN}Direct mode — provider: {provider_name}, model: {model}, "
