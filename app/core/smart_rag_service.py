@@ -104,6 +104,17 @@ class SmartRAGService:
         logger.info("Streamlined RAG v4.0 initialized with LLM Registry + cached embeddings")
 
     @staticmethod
+    def _find_mentioned_strain(query: str, session_strains) -> Optional[int]:
+        """Check if query mentions a specific strain name from the session."""
+        query_lower = query.lower()
+        # Check longest names first to avoid partial matches (e.g. "Haze" vs "Purple Haze")
+        indexed = sorted(enumerate(session_strains), key=lambda x: len(x[1].name or ""), reverse=True)
+        for i, strain in indexed:
+            if strain.name and strain.name.lower() in query_lower:
+                return i
+        return None
+
+    @staticmethod
     def _build_strain_info(strains, limit: int = 5) -> list:
         """Build enriched strain info dicts for mini-prompt response generation."""
         info = []
@@ -299,6 +310,15 @@ class SmartRAGService:
             logger.info("🔄 Override follow-up → new search (similar strains with minimal context)")
             analysis.is_follow_up = False
 
+        # Override: new attributes/criteria introduced → new search, not follow-up
+        if analysis.is_follow_up and (
+            analysis.required_effects or analysis.required_flavors
+            or analysis.required_terpenes or analysis.required_helps_with
+            or analysis.exclude_negatives
+        ):
+            logger.info("🔄 Override follow-up → new search (new attributes detected)")
+            analysis.is_follow_up = False
+
         if analysis.is_follow_up and session_strains:
             logger.info("🔄 Follow-up query detected - using deterministic executor")
             intent = analysis.follow_up_intent
@@ -306,12 +326,21 @@ class SmartRAGService:
                 logger.info("No follow_up_intent from LLM, using keyword detection")
                 intent = detect_follow_up_intent_keywords(query)
 
+            # "tell me about [strain name]" → select that strain from session + LLM description
+            _wants_strain_description = False
+            if intent.action == "describe":
+                mentioned_idx = self._find_mentioned_strain(query, session_strains)
+                if mentioned_idx is not None:
+                    logger.info(f"🎯 Follow-up describe mentions '{session_strains[mentioned_idx].name}' → select")
+                    intent = FollowUpIntent(action="select", strain_indices=[mentioned_idx])
+                    _wants_strain_description = True
+
             # Determine if executor can handle this intent precisely
             # compare/sort by THC/CBD/CBG and select → deterministic (exact numbers)
             # Everything else (describe, filter, semantic compare) → LLM mini-prompt
             _numeric_fields = {"thc", "cbd", "cbg"}
             _executor_is_precise = (
-                intent.action == "select"
+                (intent.action == "select" and not _wants_strain_description)
                 or (intent.action in ("compare", "sort") and intent.field in _numeric_fields)
             )
             _use_llm_fallback = not _executor_is_precise
@@ -376,6 +405,17 @@ class SmartRAGService:
                 )
             else:
                 result_strains = found_strains
+
+            # Generate accurate response from actual DB data
+            if result_strains:
+                try:
+                    strain_info = self._build_strain_info(result_strains)
+                    analysis.natural_response = await db_svc.streamlined_analyzer.agenerate_response_only(
+                        query=query, strains=strain_info, language=analysis.detected_language
+                    )
+                except Exception as e:
+                    logger.warning(f"Mini-prompt for specific strain failed: {e}")
+
             db_svc._update_session_streamlined(session, query, analysis, result_strains)
             await self.session_manager.asave_session_with_backup(session)
             return await run_db(
@@ -648,15 +688,33 @@ class SmartRAGService:
                     logger.info("🔄 Override follow-up → new search (similar strains with minimal context)")
                     analysis.is_follow_up = False
 
+                # Override: new attributes/criteria introduced → new search, not follow-up
+                if analysis.is_follow_up and (
+                    analysis.required_effects or analysis.required_flavors
+                    or analysis.required_terpenes or analysis.required_helps_with
+                    or analysis.exclude_negatives
+                ):
+                    logger.info("🔄 Override follow-up → new search (new attributes detected)")
+                    analysis.is_follow_up = False
+
                 if analysis.is_follow_up and session_strains:
                     from app.core.follow_up_executor import detect_follow_up_intent_keywords
                     intent = analysis.follow_up_intent
                     if not intent:
                         intent = detect_follow_up_intent_keywords(query)
 
+                    # "tell me about [strain name]" → select that strain + LLM description
+                    _wants_strain_description = False
+                    if intent.action == "describe":
+                        mentioned_idx = self._find_mentioned_strain(query, session_strains)
+                        if mentioned_idx is not None:
+                            logger.info(f"🎯 Follow-up describe mentions '{session_strains[mentioned_idx].name}' → select")
+                            intent = FollowUpIntent(action="select", strain_indices=[mentioned_idx])
+                            _wants_strain_description = True
+
                     _numeric_fields = {"thc", "cbd", "cbg"}
                     _executor_is_precise = (
-                        intent.action == "select"
+                        (intent.action == "select" and not _wants_strain_description)
                         or (intent.action in ("compare", "sort") and intent.field in _numeric_fields)
                     )
                     _use_llm_fallback = not _executor_is_precise
@@ -665,27 +723,44 @@ class SmartRAGService:
                         intent=intent, session_strains=session_strains, language=analysis.detected_language
                     )
 
-                    if _use_llm_fallback:
-                        try:
-                            strain_info = self._build_strain_info(result_strains)
-                            llm_response = await db_svc.streamlined_analyzer.agenerate_response_only(
-                                query=query, strains=strain_info, language=analysis.detected_language
-                            )
-                            analysis.natural_response = llm_response
-                        except Exception:
-                            analysis.natural_response = deterministic_response
-                    else:
-                        analysis.natural_response = deterministic_response
-
+                    # Save session before streaming
+                    analysis.natural_response = "..."
                     db_svc._update_session_streamlined(session, query, analysis, result_strains)
                     await self.session_manager.asave_session_with_backup(session)
+
+                    # Metadata (empty response — text comes via response_chunk)
                     response = await run_db(
                         db_svc._build_streamlined_response,
                         analysis, result_strains, session,
                         {"is_search_query": True, "is_follow_up": True, "deterministic_executor": True}
                     )
-                    yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
+                    metadata_dict = _json.loads(response.model_dump_json())
+                    metadata_dict["response"] = ""
+                    yield {"type": "metadata", "data": metadata_dict}
+
+                    # Stream the response text
+                    full_response = ""
+                    if _use_llm_fallback:
+                        try:
+                            strain_info = self._build_strain_info(result_strains)
+                            async for chunk in db_svc.streamlined_analyzer.astream_response_only(
+                                query=query, strains=strain_info, language=analysis.detected_language
+                            ):
+                                yield {"type": "response_chunk", "text": chunk}
+                                full_response += chunk
+                        except Exception:
+                            full_response = deterministic_response
+                            yield {"type": "response_chunk", "text": deterministic_response}
+                    else:
+                        full_response = deterministic_response
+                        yield {"type": "response_chunk", "text": deterministic_response}
+
                     yield {"type": "done"}
+
+                    # Update session with actual response text
+                    if session.conversation_history and full_response:
+                        session.conversation_history[-1]['response'] = full_response
+                        await self.session_manager.asave_session_with_backup(session)
                     return
 
                 # Specific strain branch
@@ -709,15 +784,38 @@ class SmartRAGService:
                         )
                     else:
                         result_strains = found_strains
+
+                    # Save session before streaming
+                    analysis.natural_response = "..."
                     db_svc._update_session_streamlined(session, query, analysis, result_strains)
                     await self.session_manager.asave_session_with_backup(session)
+
+                    # Metadata (empty response — text comes via response_chunk)
                     response = await run_db(
                         db_svc._build_streamlined_response,
                         analysis, result_strains, session,
                         {"is_search_query": True, "specific_strain_query": True}
                     )
-                    yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
+                    metadata_dict = _json.loads(response.model_dump_json())
+                    metadata_dict["response"] = ""
+                    yield {"type": "metadata", "data": metadata_dict}
+
+                    # Stream response from actual DB data
+                    full_response = ""
+                    if result_strains:
+                        strain_info = self._build_strain_info(result_strains)
+                        async for chunk in db_svc.streamlined_analyzer.astream_response_only(
+                            query=query, strains=strain_info, language=analysis.detected_language
+                        ):
+                            yield {"type": "response_chunk", "text": chunk}
+                            full_response += chunk
+
                     yield {"type": "done"}
+
+                    # Update session with actual response text
+                    if session.conversation_history and full_response:
+                        session.conversation_history[-1]['response'] = full_response
+                        await self.session_manager.asave_session_with_backup(session)
                     return
 
                 # Main search path

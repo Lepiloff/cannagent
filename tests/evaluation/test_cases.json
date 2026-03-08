@@ -347,6 +347,365 @@
       },
       "expected_strains": ">0",
       "tags": ["search", "category", "thc", "flavor", "medical", "en"]
+    },
+    {
+      "id": "specific_strain_blue_dream",
+      "query": "tell me about Blue Dream",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_name": "Blue Dream",
+        "detected_language": "en"
+      },
+      "expected_strains": 1,
+      "tags": ["specific_strain", "en"]
+    },
+    {
+      "id": "specific_strain_es",
+      "query": "cuéntame sobre ACDC",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_name": "ACDC",
+        "detected_language": "es"
+      },
+      "expected_strains": 1,
+      "tags": ["specific_strain", "es"]
+    },
+    {
+      "id": "followup_compare_thc_desc",
+      "query": "which has the highest THC?",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "suggest me indica"}],
+        "recommended_strains": ["Purple Kush", "Granddaddy Purple", "Northern Lights"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "compare", "en"]
+    },
+    {
+      "id": "followup_compare_thc_asc_es",
+      "query": "¿cuál tiene menos THC?",
+      "language": "es",
+      "session_context": {
+        "conversation_history": [{"query": "recomiéndame indica"}],
+        "recommended_strains": ["Purple Kush", "Granddaddy Purple", "Northern Lights"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "es"
+      },
+      "tags": ["follow_up", "compare", "es"]
+    },
+    {
+      "id": "followup_describe_specific_strain",
+      "query": "tell me about Northern Lights",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "suggest me indica"}],
+        "recommended_strains": ["Purple Kush", "Granddaddy Purple", "Northern Lights"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "describe", "specific_strain", "en"]
+    },
+    {
+      "id": "followup_describe_specific_strain_es",
+      "query": "cuéntame sobre Purple Kush",
+      "language": "es",
+      "session_context": {
+        "conversation_history": [{"query": "recomiéndame indica"}],
+        "recommended_strains": ["Purple Kush", "Granddaddy Purple", "Northern Lights"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "detected_language": "es"
+      },
+      "tags": ["follow_up", "describe", "specific_strain", "es"]
+    },
+    {
+      "id": "followup_new_search_not_followup",
+      "query": "now show me sativa strains for energy",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "suggest me indica"}],
+        "recommended_strains": ["Purple Kush", "Granddaddy Purple"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Sativa",
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "not_followup", "en"],
+      "groq_known_failure": true,
+      "groq_known_failure_reason": "llama-3.3-70b misclassifies as follow-up; SmartRAGService runtime override corrects it (required_effects=['energetic'] triggers new-search override)"
+    },
+    {
+      "id": "followup_select_first",
+      "query": "tell me more about the first one",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "suggest me indica for sleep"}],
+        "recommended_strains": ["MK Ultra (Indica, THC: 20%)", "King Louis (Indica, THC: 20%)", "Purple Kush (Indica, THC: 19%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "select", "en"]
+    },
+    {
+      "id": "followup_sort_by_thc",
+      "query": "sort them by THC from highest to lowest",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "show me sativa strains"}],
+        "recommended_strains": ["Super Silver Haze (Sativa, THC: 21%)", "Lamb's Bread (Sativa, THC: 18%)", "Haze (Sativa, THC: 18%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "sort", "en"]
+    },
+    {
+      "id": "followup_filter_category",
+      "query": "show me only the indica ones from that list",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "recommend some strains"}],
+        "recommended_strains": ["Blue Dream (Hybrid, THC: 19%)", "Northern Lights (Indica, THC: 17%)", "Trainwreck (Sativa, THC: 19%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "filter", "en"]
+    },
+    {
+      "id": "followup_es_sort_thc",
+      "query": "ordénalas de mayor a menor por THC",
+      "language": "es",
+      "session_context": {
+        "conversation_history": [{"query": "recomiéndame sativas energéticas"}],
+        "recommended_strains": ["Super Silver Haze (Sativa, THC: 21%)", "Acapulco Gold (Sativa, THC: 18%)", "Haze (Sativa, THC: 18%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "es"
+      },
+      "tags": ["follow_up", "sort", "es"]
+    },
+    {
+      "id": "followup_es_select_primera",
+      "query": "dame más información sobre la primera",
+      "language": "es",
+      "session_context": {
+        "conversation_history": [{"query": "recomiéndame indica para dormir"}],
+        "recommended_strains": ["MK Ultra (Indica, THC: 20%)", "King Louis (Indica, THC: 20%)", "Purple Kush (Indica, THC: 19%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "es"
+      },
+      "tags": ["follow_up", "select", "es"]
+    },
+    {
+      "id": "followup_compare_cbd",
+      "query": "which of these has the most CBD?",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "I need something for pain and anxiety"}],
+        "recommended_strains": ["ACDC (Hybrid, THC: 1%, CBD: 13%)", "Harlequin (Sativa, THC: 5%, CBD: 9%)", "Pennywise (Indica, THC: 8%, CBD: 8%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": true,
+        "detected_language": "en"
+      },
+      "tags": ["follow_up", "compare", "cbd", "en"]
+    },
+    {
+      "id": "search_no_dry_mouth",
+      "query": "indica for relaxation without dry mouth",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "negatives", "category", "en"]
+    },
+    {
+      "id": "search_party_social",
+      "query": "something fun and energetic for a party night",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "effects", "semantic", "en"]
+    },
+    {
+      "id": "search_focus_study",
+      "query": "something to help me focus while studying",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "effects", "semantic", "en"]
+    },
+    {
+      "id": "search_es_concentracion",
+      "query": "algo para concentrarme mejor en el trabajo",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "effects", "semantic", "es"]
+    },
+    {
+      "id": "search_es_fiesta",
+      "query": "quiero algo para una fiesta, que sea social y divertido",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "effects", "semantic", "es"]
+    },
+    {
+      "id": "search_hybrid_citrus_es",
+      "query": "un híbrido con sabor cítrico y efecto relajante",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Hybrid",
+        "detected_language": "es"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "flavor", "category", "es"]
+    },
+    {
+      "id": "specific_strain_casual_phrasing",
+      "query": "do you have any info on OG Kush?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_name": "OG Kush",
+        "detected_language": "en"
+      },
+      "expected_strains": 1,
+      "tags": ["specific_strain", "en"]
+    },
+    {
+      "id": "specific_strain_casual_es",
+      "query": "¿tienes información sobre Trainwreck?",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_name": "Trainwreck",
+        "detected_language": "es"
+      },
+      "expected_strains": 1,
+      "tags": ["specific_strain", "es"]
+    },
+    {
+      "id": "search_complex_multi_criteria",
+      "query": "sativa hybrid with myrcene, good for focus and creativity, high THC, no paranoia",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "terpene", "effects", "negatives", "complex", "en"]
+    },
+    {
+      "id": "search_anxiety_no_paranoia",
+      "query": "something for anxiety but without paranoia or dizziness",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "medical", "negatives", "en"]
+    },
+    {
+      "id": "non_search_general_cannabis_question",
+      "query": "what's the difference between indica and sativa?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": false,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": 0,
+      "tags": ["non-search", "general", "en"]
+    },
+    {
+      "id": "new_search_after_session",
+      "query": "actually, now I want something sweet and fruity",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "suggest me indica for sleep"}],
+        "recommended_strains": ["MK Ultra (Indica, THC: 20%)", "King Louis (Indica, THC: 20%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en"
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "new_search_after_context", "flavor", "en"],
+      "groq_known_failure": true,
+      "groq_known_failure_reason": "llama-3.3-70b sets is_follow_up=true but also required_flavors=['sweet','fruity'] — runtime override in SmartRAGService correctly converts to new search"
     }
   ]
 }

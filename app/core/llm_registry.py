@@ -46,19 +46,44 @@ class LLMRegistry:
     def _init_from_env(self) -> None:
         """Initialize per-purpose providers from environment variables."""
         analysis_provider = os.getenv('ANALYSIS_LLM_PROVIDER', '').lower()
+        response_provider = os.getenv('RESPONSE_LLM_PROVIDER', '').lower()
 
+        # --- Analysis provider ---
         if analysis_provider == 'groq':
             groq_api_key = os.getenv('GROQ_API_KEY')
             if not groq_api_key:
                 logger.warning("ANALYSIS_LLM_PROVIDER=groq but GROQ_API_KEY not set — falling back to OpenAI")
-                return
-            try:
-                from app.core.llm_interface import GroqLLM
-                self._analysis = GroqLLM(groq_api_key)
-                self._prompt_strategy = GroqPromptStrategy()
-                logger.info(f"Analysis provider: Groq ({os.getenv('GROQ_ANALYSIS_MODEL', 'llama-3.3-70b-versatile')})")
-            except ImportError as e:
-                logger.warning(f"Failed to load GroqLLM ({e}) — falling back to OpenAI")
+            else:
+                try:
+                    from app.core.llm_interface import GroqLLM
+                    self._analysis = GroqLLM(groq_api_key)
+                    self._prompt_strategy = GroqPromptStrategy()
+                    logger.info(f"Analysis provider: Groq ({os.getenv('GROQ_ANALYSIS_MODEL', 'llama-3.3-70b-versatile')})")
+                except ImportError as e:
+                    logger.warning(f"Failed to load GroqLLM ({e}) — falling back to OpenAI")
+
+        # --- Response provider ---
+        # Currently only OpenAI supports streaming response generation.
+        # RESPONSE_LLM_PROVIDER is reserved for future providers.
+        if response_provider and response_provider != 'openai':
+            logger.warning(
+                f"RESPONSE_LLM_PROVIDER={response_provider!r} is not supported "
+                f"(only 'openai' available for response) — using OpenAI"
+            )
+
+        # --- Startup summary ---
+        analysis_name = (
+            f"Groq/{os.getenv('GROQ_ANALYSIS_MODEL', 'llama-3.3-70b-versatile')}"
+            if self._analysis is not None
+            else f"OpenAI/{os.getenv('OPENAI_AGENT_MODEL', 'gpt-4o-mini')}"
+        )
+        response_name = f"OpenAI/{os.getenv('OPENAI_AGENT_MODEL', 'gpt-4o-mini')}"
+        embedding_name = f"OpenAI/{os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')}"
+        logger.info(
+            f"LLM routing — analysis: {analysis_name} | "
+            f"response: {response_name} | "
+            f"embeddings: {embedding_name}"
+        )
 
     def _ensure_default(self) -> LLMInterface:
         if self._default is None:
