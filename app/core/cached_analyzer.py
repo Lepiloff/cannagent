@@ -8,11 +8,29 @@ queries always go to the LLM.
 
 import hashlib
 import logging
+import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysis
 
 logger = logging.getLogger(__name__)
+
+# Filler phrases that carry no search intent — removing them improves cache hit rate
+# e.g. "please show me indica" and "show me indica" → same cache key
+_FILLER_EN = re.compile(
+    r"\b(please|can you|could you|i want|i need|i'm looking for|"
+    r"show me|give me|find me|recommend me|suggest me|help me find|"
+    r"do you have|what do you have|i'd like)\b",
+    re.IGNORECASE,
+)
+_FILLER_ES = re.compile(
+    r"\b(por favor|puedes|podrías|quiero|necesito|busco|"
+    r"dame|muéstrame|muéstrame|recomiéndame|sugiere|ayúdame a encontrar|"
+    r"tienes|qué tienes|me gustaría|quisiera)\b",
+    re.IGNORECASE,
+)
+_PUNCTUATION = re.compile(r"[^\w\s]")
 
 
 class CachedQueryAnalyzer:
@@ -46,7 +64,11 @@ class CachedQueryAnalyzer:
         """
         if has_session_context:
             return None
-        normalized = " ".join(query.lower().strip().split())
+        q = query.lower().strip()
+        q = _FILLER_EN.sub("", q)
+        q = _FILLER_ES.sub("", q)
+        q = _PUNCTUATION.sub("", q)
+        normalized = " ".join(q.split())
         query_hash = hashlib.md5(normalized.encode()).hexdigest()
         return f"analysis:{language}:{query_hash}"
 
