@@ -115,6 +115,42 @@ class SmartRAGService:
         return None
 
     @staticmethod
+    def _reclassify_if_strain_mentioned(analysis, query: str, session_strains):
+        """
+        Safety net: if LLM misclassified a strain-specific query as non-search,
+        reclassify based on deterministic string matching.
+
+        Catches cases like "Cuéntame sobre la variedad Chocolope" being wrongly
+        classified as is_search_query=False by the analysis model.
+        """
+        if analysis.is_search_query:
+            return  # already classified correctly
+
+        # Check if query mentions a session strain by name
+        if session_strains:
+            idx = SmartRAGService._find_mentioned_strain(query, session_strains)
+            if idx is not None:
+                strain_name = session_strains[idx].name
+                logger.info(
+                    f"🔄 Reclassify: non-search → follow-up describe "
+                    f"(query mentions session strain '{strain_name}')"
+                )
+                analysis.is_search_query = True
+                analysis.is_follow_up = True
+                analysis.follow_up_intent = FollowUpIntent(
+                    action="describe", strain_indices=[idx]
+                )
+                return
+
+        # Check if analysis already detected a specific strain name
+        if analysis.specific_strain_name:
+            logger.info(
+                f"🔄 Reclassify: non-search → specific strain query "
+                f"(specific_strain_name='{analysis.specific_strain_name}')"
+            )
+            analysis.is_search_query = True
+
+    @staticmethod
     def _build_strain_info(strains, limit: int = 5) -> list:
         """Build enriched strain info dicts for mini-prompt response generation."""
         info = []
@@ -269,6 +305,9 @@ class SmartRAGService:
                 detected_language=detected_language,
                 confidence=0.5
             )
+
+        # Safety net: reclassify if LLM missed a strain mention
+        self._reclassify_if_strain_mentioned(analysis, query, session_strains)
 
         # --- Branch: non-search ---
         if not analysis.is_search_query:
@@ -645,6 +684,9 @@ class SmartRAGService:
                         natural_response="I can help you find the right strain.",
                         suggested_follow_ups=[], detected_language=detected_language, confidence=0.5
                     )
+
+                # Safety net: reclassify if LLM missed a strain mention
+                self._reclassify_if_strain_mentioned(analysis, query, session_strains)
 
                 # Non-search branch
                 if not analysis.is_search_query:
