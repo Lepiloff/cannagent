@@ -16,18 +16,71 @@ from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer, QueryAnalysi
 
 logger = logging.getLogger(__name__)
 
-# Filler phrases that carry no search intent — removing them improves cache hit rate
-# e.g. "please show me indica" and "show me indica" → same cache key
+# Filler phrases that carry no search intent — removing them improves cache hit rate.
+# e.g. "please show me indica" and "show me indica" → same cache key.
+# Longer multi-word patterns must come before shorter ones to match greedily.
 _FILLER_EN = re.compile(
-    r"\b(please|can you|could you|i want|i need|i'm looking for|"
-    r"show me|give me|find me|recommend me|suggest me|help me find|"
-    r"do you have|what do you have|i'd like)\b",
+    r"\b("
+    # Polite hedges
+    r"please|kindly|if possible|if you can"
+    # Want/need (multi-word first)
+    r"|i'm looking for|i am looking for|i'm searching for|i'm interested in"
+    r"|i was wondering about|i was wondering if|i was hoping for"
+    r"|i would like|i'd like|i wanna|i want to|i want"
+    r"|i need to find|i need"
+    r"|looking for|searching for|interested in"
+    # Command verbs (multi-word first)
+    r"|can you please|could you please|would you please"
+    r"|can you|could you|would you|will you"
+    r"|help me find|help me choose|help me pick"
+    r"|show me|give me|find me|get me|bring me"
+    r"|recommend me|suggest me"
+    r"|hook me up with|point me to"
+    r"|tell me about|tell me"
+    # Question frames (multi-word first)
+    r"|what would you suggest|what would you recommend"
+    r"|what do you suggest|what do you recommend"
+    r"|what do you have|do you have|do you know|do you carry"
+    r"|is there any|are there any|is there|are there"
+    r"|what are some|what about|how about"
+    r"|any chance you have|by any chance"
+    r"|got any|got something"
+    # Conversational hedges
+    r"|just looking for|just wondering"
+    r"|something like|sort of like"
+    r"|any good|some good"
+    r"|maybe|perhaps"
+    r")\b",
     re.IGNORECASE,
 )
 _FILLER_ES = re.compile(
-    r"\b(por favor|puedes|podrías|quiero|necesito|busco|"
-    r"dame|muéstrame|muéstrame|recomiéndame|sugiere|ayúdame a encontrar|"
-    r"tienes|qué tienes|me gustaría|quisiera)\b",
+    r"\b("
+    # Polite
+    r"por favor|si puedes|si es posible"
+    # Want/need (multi-word first)
+    r"|me gustaría|me gustaria|quisiera"
+    r"|estoy buscando|ando buscando"
+    r"|me interesa|me interesan"
+    r"|quiero|necesito|busco"
+    # Command verbs (multi-word first)
+    r"|ayúdame a encontrar|ayudame a encontrar"
+    r"|ayúdame a elegir|ayudame a elegir"
+    r"|ayúdame a buscar|ayudame a buscar"
+    r"|qué me recomiendas|que me recomiendas"
+    r"|qué me sugieres|que me sugieres"
+    r"|me puedes mostrar|me puedes dar|me puedes enseñar"
+    r"|puedes|podrías|podrias"
+    r"|muéstrame|muestrame|enséñame|ensename"
+    r"|recomiéndame|recomiendame|sugiéreme|sugiereme"
+    r"|dame|dime|sugiere"
+    # Question frames
+    r"|qué tienes|que tienes|tienen|tienes"
+    r"|hay algo|hay"
+    r"|conoces|sabes de"
+    # Hedges
+    r"|alguna|algún|algunos|algunas"
+    r"|tal vez|quizás|quizas"
+    r")\b",
     re.IGNORECASE,
 )
 _PUNCTUATION = re.compile(r"[^\w\s]")
