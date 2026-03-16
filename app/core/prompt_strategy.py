@@ -68,12 +68,9 @@ Analyze the user's query and provide:
    - If specific strain detected, return ONLY that strain (limit=1), not similar ones
 
 1. **Category Detection** (for SQL pre-filtering):
-   - If user mentions "indica", "sativa", or "hybrid" explicitly → return that category
-   - If user describes effects that strongly suggest a category → return that category
-     * "relax", "sleep", "calm", "evening", "dormir", "relajar" → Indica
-     * "energy", "focus", "creative", "daytime", "energía", "creatividad" → Sativa
-     * "balanced", "versatile", "equilibrado" → Hybrid
-   - If NO clear category → return null
+   - ONLY set if user explicitly mentions "indica", "sativa", or "hybrid"
+   - Do NOT infer category from effects/mood/time-of-day — vector search handles relevance
+   - If NO explicit category mention → return null
    - Valid values: "Indica", "Sativa", "Hybrid", or null
 
 2. **THC Level Detection** (for SQL pre-filtering):
@@ -270,7 +267,7 @@ RULES:
 
 **specific_strain_name**: exact name if user asks about ONE specific strain; null for general search.
 
-**detected_category**: "Indica"|"Sativa"|"Hybrid"|null — only if explicitly mentioned or strongly implied by effects (relax/sleep→Indica, energy/focus→Sativa, balanced→Hybrid).
+**detected_category**: "Indica"|"Sativa"|"Hybrid"|null — ONLY if user explicitly mentions the category. Do NOT infer from effects/mood.
 
 **thc_level**: "low"|"medium"|"high"|null — low(<10%), medium(10-20%), high(>20%).
 

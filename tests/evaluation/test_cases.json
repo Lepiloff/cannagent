@@ -327,11 +327,10 @@
       "expected": {
         "is_search_query": true,
         "is_follow_up": false,
-        "detected_category": "Indica",
         "detected_language": "es"
       },
       "expected_strains": ">0",
-      "tags": ["search", "category", "semantic", "es"]
+      "tags": ["search", "semantic", "es"]
     },
     {
       "id": "search_multi_filter",
