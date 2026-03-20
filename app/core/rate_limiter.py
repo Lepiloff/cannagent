@@ -23,7 +23,8 @@ def rate_limit(rate: str):
 rate_limit_requests = int(os.getenv('RATE_LIMIT_REQUESTS', '100'))
 rate_limit_period = int(os.getenv('RATE_LIMIT_PERIOD', '60'))
 
-CHAT_RATE_LIMIT = f"{rate_limit_requests // 4}/{rate_limit_period}minute"
+# Sustained + burst limits: "3/10second" prevents rapid-fire, per-hour limit caps total
+CHAT_RATE_LIMIT = f"3/10second;{rate_limit_requests // 4}/{rate_limit_period}minute"
 PRODUCTS_RATE_LIMIT = f"{rate_limit_requests // 2}/{rate_limit_period}minute"
 HEALTH_RATE_LIMIT = f"{rate_limit_requests * 2}/{rate_limit_period}minute"
 

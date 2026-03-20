@@ -8,7 +8,9 @@ help:
 	@echo "  stop         - Stop all services"  
 	@echo "  restart      - Restart all services"
 	@echo "  logs         - Show logs"
-	@echo "  test         - Run tests"
+	@echo "  test         - Run unit/integration tests (in container)"
+	@echo "  test-e2e     - Run E2E smoke tests against running API"
+	@echo "  test-eval    - Run evaluation pipeline (direct mode)"
 	@echo "  clean        - Clean up containers and volumes"
 	@echo "  migration    - Create new database migration"
 	@echo "  init-db      - Initialize database with migrations"
@@ -47,12 +49,20 @@ restart: stop start
 logs:
 	docker-compose logs -f
 
-# Run tests
+# Run unit/integration tests (pytest-compatible, no running API needed)
 test:
-	docker compose exec api pytest tests/ -v
+	docker compose exec api pytest tests/ -v --ignore=tests/evaluation --ignore=tests/test_e2e_chat.py
 
 # Alias for tests
 tests: test
+
+# Run E2E smoke tests against running API (from host, not container)
+test-e2e:
+	python tests/test_e2e_chat.py
+
+# Run evaluation pipeline (direct mode, no API needed)
+test-eval:
+	python tests/evaluation/eval_analysis.py --direct
 
 # Clean up containers and volumes
 clean:

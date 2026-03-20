@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Dict, Any
+from typing import AsyncIterator, List, Optional, Dict, Any
 from app.models.session import ConversationSession
 from app.models.schemas import (
     ChatResponse,
@@ -30,6 +30,13 @@ from app.core.follow_up_executor import FollowUpExecutor, detect_follow_up_inten
 
 # DB-Aware Architecture - Taxonomy System
 from app.core.taxonomy_init import get_taxonomy_system
+
+# Security
+from app.core.input_sanitizer import (
+    check_output_leakage,
+    detect_prompt_injection,
+    get_output_leakage_guard_chars,
+)
 
 import os
 
@@ -176,6 +183,130 @@ class SmartRAGService:
             info.append(d)
         return info
 
+    @staticmethod
+    def _off_topic_response(language: Optional[str]) -> str:
+        """Deterministic response for clearly out-of-scope requests."""
+        if language == "en":
+            return (
+                "I can only help with cannabis-related topics such as strains, effects, "
+                "flavors, terpenes, and product recommendations. What cannabis question can I help with?"
+            )
+        return (
+            "Solo puedo ayudar con temas relacionados con cannabis, como cepas, efectos, "
+            "sabores, terpenos y recomendaciones. ¿Con qué pregunta sobre cannabis te ayudo?"
+        )
+
+    @staticmethod
+    def _off_topic_follow_ups(language: Optional[str]) -> List[str]:
+        """Suggested next steps for out-of-scope requests."""
+        if language == "en":
+            return ["Strains for sleep", "High CBD options", "Relaxing indicas"]
+        return ["Cepas para dormir", "Opciones con alto CBD", "Indicas relajantes"]
+
+    @staticmethod
+    def _security_fallback(language: Optional[str]) -> str:
+        """Generic safe response used when output must be scrubbed."""
+        if language == "en":
+            return (
+                "I can help you find strains based on effects, flavors, "
+                "or medical needs. What are you looking for?"
+            )
+        return (
+            "Puedo ayudarte a encontrar cepas según efectos, sabores "
+            "o necesidades médicas. ¿Qué estás buscando?"
+        )
+
+    @classmethod
+    def _sanitize_user_visible_text(cls, text: str, language: Optional[str]) -> str:
+        """Replace leaked output with a safe fallback before showing or saving it."""
+        if text and check_output_leakage(text):
+            logger.warning("Output leakage blocked before response delivery")
+            return cls._security_fallback(language)
+        return text
+
+    @staticmethod
+    def _security_follow_ups(language: Optional[str]) -> List[str]:
+        """Cannabis-oriented follow-ups used for deterministic refusals."""
+        if language == "en":
+            return ["Strains for sleep", "High CBD options", "Relaxing indicas"]
+        return ["Cepas para dormir", "Opciones con alto CBD", "Indicas relajantes"]
+
+    @classmethod
+    def _apply_off_topic_override(
+        cls,
+        analysis: QueryAnalysis,
+        language: Optional[str],
+    ) -> QueryAnalysis:
+        """Force a deterministic scope reminder for clearly out-of-topic non-search queries."""
+        if analysis.is_search_query or not analysis.is_off_topic:
+            return analysis
+
+        logger.info("Applying deterministic off-topic non-search refusal")
+        analysis.natural_response = cls._off_topic_response(language)
+        analysis.suggested_follow_ups = cls._off_topic_follow_ups(language)
+        return analysis
+
+    @classmethod
+    def _apply_non_search_security_override(
+        cls,
+        query: str,
+        analysis: QueryAnalysis,
+        language: Optional[str],
+    ) -> QueryAnalysis:
+        """Force a deterministic budtender refusal for PI-style non-search queries."""
+        if analysis.is_search_query or not detect_prompt_injection(query):
+            return analysis
+
+        logger.info("Applying deterministic non-search security refusal")
+        analysis.natural_response = cls._security_fallback(language)
+        analysis.suggested_follow_ups = cls._security_follow_ups(language)
+        return analysis
+
+    @classmethod
+    async def _iter_safe_stream_chunks(
+        cls,
+        chunk_iter: AsyncIterator[str],
+        language: Optional[str],
+    ) -> AsyncIterator[str]:
+        """Emit only text that is safe to show to the client.
+
+        Retains a trailing window so leakage signatures split across chunk
+        boundaries can be detected before any matching fragment is emitted.
+        """
+        guard_chars = get_output_leakage_guard_chars()
+        pending = ""
+        emitted_any = False
+
+        async for chunk in chunk_iter:
+            if not chunk:
+                continue
+
+            pending += chunk
+
+            if check_output_leakage(pending):
+                logger.warning("Output leakage blocked before streaming to client")
+                if not emitted_any:
+                    yield cls._security_fallback(language)
+                return
+
+            if guard_chars and len(pending) > guard_chars:
+                safe_prefix = pending[:-guard_chars]
+                if safe_prefix:
+                    emitted_any = True
+                    yield safe_prefix
+                pending = pending[-guard_chars:]
+
+        if not pending:
+            return
+
+        if check_output_leakage(pending):
+            logger.warning("Output leakage blocked before streaming to client")
+            if not emitted_any:
+                yield cls._security_fallback(language)
+            return
+
+        yield pending
+
     async def aprocess_contextual_query(
         self,
         query: str,
@@ -308,6 +439,10 @@ class SmartRAGService:
 
         # Safety net: reclassify if LLM missed a strain mention
         self._reclassify_if_strain_mentioned(analysis, query, session_strains)
+        analysis = self._apply_off_topic_override(analysis, detected_language)
+        analysis = self._apply_non_search_security_override(
+            query, analysis, detected_language
+        )
 
         # --- Branch: non-search ---
         if not analysis.is_search_query:
@@ -317,7 +452,10 @@ class SmartRAGService:
             return await run_db(
                 db_svc._build_streamlined_response,
                 analysis, [], session,
-                {"is_search_query": False, "reason": "greeting_or_general_question"}
+                {
+                    "is_search_query": False,
+                    "reason": "off_topic" if analysis.is_off_topic else "greeting_or_general_question",
+                }
             )
 
         # --- Context inheritance: "otras opciones" / "more options" ---
@@ -687,6 +825,10 @@ class SmartRAGService:
 
                 # Safety net: reclassify if LLM missed a strain mention
                 self._reclassify_if_strain_mentioned(analysis, query, session_strains)
+                analysis = self._apply_off_topic_override(analysis, detected_language)
+                analysis = self._apply_non_search_security_override(
+                    query, analysis, detected_language
+                )
 
                 # Non-search branch
                 if not analysis.is_search_query:
@@ -695,7 +837,10 @@ class SmartRAGService:
                     response = await run_db(
                         db_svc._build_streamlined_response,
                         analysis, [], session,
-                        {"is_search_query": False, "reason": "greeting_or_general_question"}
+                        {
+                            "is_search_query": False,
+                            "reason": "off_topic" if analysis.is_off_topic else "greeting_or_general_question",
+                        }
                     )
                     yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
                     yield {"type": "done"}
@@ -785,17 +930,26 @@ class SmartRAGService:
                     if _use_llm_fallback:
                         try:
                             strain_info = self._build_strain_info(result_strains)
-                            async for chunk in db_svc.streamlined_analyzer.astream_response_only(
-                                query=query, strains=strain_info, language=analysis.detected_language
+                            async for chunk in self._iter_safe_stream_chunks(
+                                db_svc.streamlined_analyzer.astream_response_only(
+                                    query=query, strains=strain_info, language=analysis.detected_language
+                                ),
+                                analysis.detected_language,
                             ):
                                 yield {"type": "response_chunk", "text": chunk}
                                 full_response += chunk
                         except Exception:
-                            full_response = deterministic_response
-                            yield {"type": "response_chunk", "text": deterministic_response}
+                            full_response = self._sanitize_user_visible_text(
+                                deterministic_response,
+                                analysis.detected_language,
+                            )
+                            yield {"type": "response_chunk", "text": full_response}
                     else:
-                        full_response = deterministic_response
-                        yield {"type": "response_chunk", "text": deterministic_response}
+                        full_response = self._sanitize_user_visible_text(
+                            deterministic_response,
+                            analysis.detected_language,
+                        )
+                        yield {"type": "response_chunk", "text": full_response}
 
                     yield {"type": "done"}
 
@@ -846,8 +1000,11 @@ class SmartRAGService:
                     full_response = ""
                     if result_strains:
                         strain_info = self._build_strain_info(result_strains)
-                        async for chunk in db_svc.streamlined_analyzer.astream_response_only(
-                            query=query, strains=strain_info, language=analysis.detected_language
+                        async for chunk in self._iter_safe_stream_chunks(
+                            db_svc.streamlined_analyzer.astream_response_only(
+                                query=query, strains=strain_info, language=analysis.detected_language
+                            ),
+                            analysis.detected_language,
                         ):
                             yield {"type": "response_chunk", "text": chunk}
                             full_response += chunk
@@ -959,16 +1116,22 @@ class SmartRAGService:
                     if fallback_notice:
                         yield {"type": "response_chunk", "text": fallback_notice}
                         full_response += fallback_notice
-                    async for chunk in db_svc.streamlined_analyzer.astream_response_only(
-                        query=query, strains=strain_info, language=detected_language
+                    async for chunk in self._iter_safe_stream_chunks(
+                        db_svc.streamlined_analyzer.astream_response_only(
+                            query=query, strains=strain_info, language=detected_language
+                        ),
+                        detected_language,
                     ):
                         yield {"type": "response_chunk", "text": chunk}
                         full_response += chunk
                 else:
                     # No strains found even after fallback — use LLM's natural_response directly.
                     if original_natural_response and original_natural_response != "...":
-                        yield {"type": "response_chunk", "text": original_natural_response}
-                        full_response = original_natural_response
+                        full_response = self._sanitize_user_visible_text(
+                            original_natural_response,
+                            detected_language,
+                        )
+                        yield {"type": "response_chunk", "text": full_response}
 
                 yield {"type": "done"}
 
@@ -1429,10 +1592,16 @@ class SmartRAGService:
             if search_ctx:
                 session.last_search_context = search_ctx
 
+        # Scrub leaked system prompt fragments before persisting
+        response_to_save = self._sanitize_user_visible_text(
+            analysis.natural_response,
+            analysis.detected_language,
+        )
+
         # Add conversation entry
         session.add_conversation_entry(
             query=query,
-            response=analysis.natural_response,
+            response=response_to_save,
             intent=analysis.detected_category or 'search'
         )
 
@@ -1451,8 +1620,17 @@ class SmartRAGService:
         # Substitute placeholders with real strain names
         response_text = self._substitute_strain_placeholders(analysis.natural_response, strains)
 
+        response_text = self._sanitize_user_visible_text(
+            response_text,
+            analysis.detected_language,
+        )
+
         # Build compact strains
         compact_strains = self._build_compact_strains(strains, language=analysis.detected_language)
+
+        response_filters = dict(filters_applied)
+        response_filters.setdefault("is_search_query", analysis.is_search_query)
+        response_filters.setdefault("is_off_topic", analysis.is_off_topic)
 
         # Quick actions
         quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(
@@ -1463,7 +1641,7 @@ class SmartRAGService:
             response=response_text,
             recommended_strains=compact_strains,
             detected_intent=analysis.detected_category or 'search',
-            filters_applied=filters_applied,
+            filters_applied=response_filters,
             session_id=session.session_id,
             query_type='streamlined_search',
             language=analysis.detected_language,
