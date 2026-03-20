@@ -3,10 +3,14 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from slowapi.util import get_remote_address
+
 from app.core.smart_rag_service import SmartRAGService
 from app.core.session_manager import SessionLockTimeout
 from app.models.schemas import ChatRequest, ChatResponse
 from app.core.rate_limiter import CHAT_RATE_LIMIT, limiter
+from app.core.input_sanitizer import sanitize_input, detect_prompt_injection
+from app.core.metrics import record_pi_detection
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +47,32 @@ async def ask_question(
             raw_body_keys,
         )
 
+        # Sanitize user input before pipeline
+        clean_message = sanitize_input(chat_request.message)
+        client_ip = get_remote_address(request)
+
+        # Prompt injection detection — log only, let pipeline handle via prompt hardening
+        if detect_prompt_injection(clean_message):
+            logger.warning(
+                "PI signal: endpoint=ask session=%s ip=%s msg=%s",
+                chat_request.session_id, client_ip, clean_message[:120],
+            )
+            record_pi_detection("ask")
+
         # Granular async pipeline: LLM calls run as native async on event loop,
         # DB calls run in a dedicated per-request thread executor.
         rag_service = SmartRAGService(repository=None)
         response = await rag_service.aprocess_contextual_query(
-            query=chat_request.message,
+            query=clean_message,
             session_id=chat_request.session_id,
             language=chat_request.language,
             history=chat_request.history,
             source_platform=chat_request.source_platform,
         )
+
+        # Output leakage is checked inside SmartRAGService._build_streamlined_response
+        # and _update_session_streamlined — no duplicate check needed here.
+
         return response
 
     except SessionLockTimeout:
@@ -86,11 +106,22 @@ async def ask_question_stream(
     then the natural language response streams token-by-token.
     This reduces perceived latency from ~7s to ~4s for first meaningful content.
     """
+    clean_message = sanitize_input(chat_request.message)
+    client_ip = get_remote_address(request)
+
+    # Prompt injection detection — log only, let pipeline handle via prompt hardening
+    if detect_prompt_injection(clean_message):
+        logger.warning(
+            "PI signal: endpoint=stream session=%s ip=%s msg=%s",
+            chat_request.session_id, client_ip, clean_message[:120],
+        )
+        record_pi_detection("stream")
+
     async def event_generator():
         try:
             rag_service = SmartRAGService(repository=None)
             async for chunk in rag_service.aprocess_contextual_query_streaming(
-                query=chat_request.message,
+                query=clean_message,
                 session_id=chat_request.session_id,
                 language=chat_request.language,
                 history=chat_request.history,

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Dict, Any
+from typing import AsyncIterator, List, Optional, Dict, Any
 from app.models.session import ConversationSession
 from app.models.schemas import (
     ChatResponse,
@@ -30,6 +30,9 @@ from app.core.follow_up_executor import FollowUpExecutor, detect_follow_up_inten
 
 # DB-Aware Architecture - Taxonomy System
 from app.core.taxonomy_init import get_taxonomy_system
+
+# Security
+from app.core.input_sanitizer import check_output_leakage, get_output_leakage_guard_chars
 
 import os
 
@@ -175,6 +178,72 @@ class SmartRAGService:
                 )
             info.append(d)
         return info
+
+    @staticmethod
+    def _security_fallback(language: Optional[str]) -> str:
+        """Generic safe response used when output must be scrubbed."""
+        if language == "en":
+            return (
+                "I can help you find strains based on effects, flavors, "
+                "or medical needs. What are you looking for?"
+            )
+        return (
+            "Puedo ayudarte a encontrar cepas según efectos, sabores "
+            "o necesidades médicas. ¿Qué estás buscando?"
+        )
+
+    @classmethod
+    def _sanitize_user_visible_text(cls, text: str, language: Optional[str]) -> str:
+        """Replace leaked output with a safe fallback before showing or saving it."""
+        if text and check_output_leakage(text):
+            logger.warning("Output leakage blocked before response delivery")
+            return cls._security_fallback(language)
+        return text
+
+    @classmethod
+    async def _iter_safe_stream_chunks(
+        cls,
+        chunk_iter: AsyncIterator[str],
+        language: Optional[str],
+    ) -> AsyncIterator[str]:
+        """Emit only text that is safe to show to the client.
+
+        Retains a trailing window so leakage signatures split across chunk
+        boundaries can be detected before any matching fragment is emitted.
+        """
+        guard_chars = get_output_leakage_guard_chars()
+        pending = ""
+        emitted_any = False
+
+        async for chunk in chunk_iter:
+            if not chunk:
+                continue
+
+            pending += chunk
+
+            if check_output_leakage(pending):
+                logger.warning("Output leakage blocked before streaming to client")
+                if not emitted_any:
+                    yield cls._security_fallback(language)
+                return
+
+            if guard_chars and len(pending) > guard_chars:
+                safe_prefix = pending[:-guard_chars]
+                if safe_prefix:
+                    emitted_any = True
+                    yield safe_prefix
+                pending = pending[-guard_chars:]
+
+        if not pending:
+            return
+
+        if check_output_leakage(pending):
+            logger.warning("Output leakage blocked before streaming to client")
+            if not emitted_any:
+                yield cls._security_fallback(language)
+            return
+
+        yield pending
 
     async def aprocess_contextual_query(
         self,
@@ -785,17 +854,26 @@ class SmartRAGService:
                     if _use_llm_fallback:
                         try:
                             strain_info = self._build_strain_info(result_strains)
-                            async for chunk in db_svc.streamlined_analyzer.astream_response_only(
-                                query=query, strains=strain_info, language=analysis.detected_language
+                            async for chunk in self._iter_safe_stream_chunks(
+                                db_svc.streamlined_analyzer.astream_response_only(
+                                    query=query, strains=strain_info, language=analysis.detected_language
+                                ),
+                                analysis.detected_language,
                             ):
                                 yield {"type": "response_chunk", "text": chunk}
                                 full_response += chunk
                         except Exception:
-                            full_response = deterministic_response
-                            yield {"type": "response_chunk", "text": deterministic_response}
+                            full_response = self._sanitize_user_visible_text(
+                                deterministic_response,
+                                analysis.detected_language,
+                            )
+                            yield {"type": "response_chunk", "text": full_response}
                     else:
-                        full_response = deterministic_response
-                        yield {"type": "response_chunk", "text": deterministic_response}
+                        full_response = self._sanitize_user_visible_text(
+                            deterministic_response,
+                            analysis.detected_language,
+                        )
+                        yield {"type": "response_chunk", "text": full_response}
 
                     yield {"type": "done"}
 
@@ -846,8 +924,11 @@ class SmartRAGService:
                     full_response = ""
                     if result_strains:
                         strain_info = self._build_strain_info(result_strains)
-                        async for chunk in db_svc.streamlined_analyzer.astream_response_only(
-                            query=query, strains=strain_info, language=analysis.detected_language
+                        async for chunk in self._iter_safe_stream_chunks(
+                            db_svc.streamlined_analyzer.astream_response_only(
+                                query=query, strains=strain_info, language=analysis.detected_language
+                            ),
+                            analysis.detected_language,
                         ):
                             yield {"type": "response_chunk", "text": chunk}
                             full_response += chunk
@@ -959,16 +1040,22 @@ class SmartRAGService:
                     if fallback_notice:
                         yield {"type": "response_chunk", "text": fallback_notice}
                         full_response += fallback_notice
-                    async for chunk in db_svc.streamlined_analyzer.astream_response_only(
-                        query=query, strains=strain_info, language=detected_language
+                    async for chunk in self._iter_safe_stream_chunks(
+                        db_svc.streamlined_analyzer.astream_response_only(
+                            query=query, strains=strain_info, language=detected_language
+                        ),
+                        detected_language,
                     ):
                         yield {"type": "response_chunk", "text": chunk}
                         full_response += chunk
                 else:
                     # No strains found even after fallback — use LLM's natural_response directly.
                     if original_natural_response and original_natural_response != "...":
-                        yield {"type": "response_chunk", "text": original_natural_response}
-                        full_response = original_natural_response
+                        full_response = self._sanitize_user_visible_text(
+                            original_natural_response,
+                            detected_language,
+                        )
+                        yield {"type": "response_chunk", "text": full_response}
 
                 yield {"type": "done"}
 
@@ -1429,10 +1516,16 @@ class SmartRAGService:
             if search_ctx:
                 session.last_search_context = search_ctx
 
+        # Scrub leaked system prompt fragments before persisting
+        response_to_save = self._sanitize_user_visible_text(
+            analysis.natural_response,
+            analysis.detected_language,
+        )
+
         # Add conversation entry
         session.add_conversation_entry(
             query=query,
-            response=analysis.natural_response,
+            response=response_to_save,
             intent=analysis.detected_category or 'search'
         )
 
@@ -1450,6 +1543,11 @@ class SmartRAGService:
 
         # Substitute placeholders with real strain names
         response_text = self._substitute_strain_placeholders(analysis.natural_response, strains)
+
+        response_text = self._sanitize_user_visible_text(
+            response_text,
+            analysis.detected_language,
+        )
 
         # Build compact strains
         compact_strains = self._build_compact_strains(strains, language=analysis.detected_language)

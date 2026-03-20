@@ -90,12 +90,14 @@ class OpenAILLM(LLMInterface):
         self.chat_model = ChatOpenAI(
             model=self._get_agent_model(),
             openai_api_key=api_key,
-            temperature=self._get_agent_temperature()
+            temperature=self._get_agent_temperature(),
+            max_tokens=2048,
         )
         self.analysis_model = ChatOpenAI(
             model=self._get_agent_model(),
             openai_api_key=api_key,
-            temperature=self._get_analysis_temperature()
+            temperature=self._get_analysis_temperature(),
+            max_tokens=1024,
         )
         self._structured_cache = {}  # schema_class -> structured_model
 
@@ -229,6 +231,7 @@ class GroqLLM(AnalysisProvider, ResponseProvider):
             model=model,
             groq_api_key=api_key,
             temperature=temperature,
+            max_tokens=1024,
         )
         self._structured_cache = {}
 

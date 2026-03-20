@@ -47,6 +47,18 @@ DATABASE_CONNECTIONS = Gauge(
     'Number of active database connections'
 )
 
+# Security metrics
+PI_DETECTIONS = Counter(
+    'security_prompt_injection_total',
+    'Prompt injection attempts detected and blocked',
+    ['endpoint']
+)
+
+OUTPUT_LEAKAGE_DETECTIONS = Counter(
+    'security_output_leakage_total',
+    'System prompt leakage detected in LLM output',
+)
+
 
 class MetricsMiddleware:
     """Middleware for collecting HTTP metrics."""
@@ -118,6 +130,16 @@ def record_vector_search_duration(duration: float):
 def record_database_connections(count: int):
     """Record current database connections."""
     DATABASE_CONNECTIONS.set(count)
+
+
+def record_pi_detection(endpoint: str):
+    """Record a prompt injection detection event."""
+    PI_DETECTIONS.labels(endpoint=endpoint).inc()
+
+
+def record_output_leakage():
+    """Record a system prompt leakage detection in output."""
+    OUTPUT_LEAKAGE_DETECTIONS.inc()
 
 
 async def get_metrics() -> Response:

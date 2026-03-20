@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Literal, Optional, Dict, Any
 from datetime import datetime
 from decimal import Decimal
 
@@ -151,11 +151,11 @@ class CompactStrain(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="User message")
+    message: str = Field(..., description="User message", max_length=500)
     history: Optional[List[str]] = Field(default=None, description="Message history")
     session_id: Optional[str] = Field(default=None, description="Session identifier for context continuity")
     source_platform: Optional[str] = Field(default=None, description="Source platform for analytics")
-    language: Optional[str] = Field(default=None, description="User language (es/en) from geolocation")
+    language: Optional[Literal["en", "es"]] = Field(default=None, description="User language (es/en) from geolocation")
 
 
 class ChatResponse(BaseModel):
