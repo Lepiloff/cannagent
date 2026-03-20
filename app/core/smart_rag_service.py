@@ -32,7 +32,11 @@ from app.core.follow_up_executor import FollowUpExecutor, detect_follow_up_inten
 from app.core.taxonomy_init import get_taxonomy_system
 
 # Security
-from app.core.input_sanitizer import check_output_leakage, get_output_leakage_guard_chars
+from app.core.input_sanitizer import (
+    check_output_leakage,
+    detect_prompt_injection,
+    get_output_leakage_guard_chars,
+)
 
 import os
 
@@ -199,6 +203,29 @@ class SmartRAGService:
             logger.warning("Output leakage blocked before response delivery")
             return cls._security_fallback(language)
         return text
+
+    @staticmethod
+    def _security_follow_ups(language: Optional[str]) -> List[str]:
+        """Cannabis-oriented follow-ups used for deterministic refusals."""
+        if language == "en":
+            return ["Strains for sleep", "High CBD options", "Relaxing indicas"]
+        return ["Cepas para dormir", "Opciones con alto CBD", "Indicas relajantes"]
+
+    @classmethod
+    def _apply_non_search_security_override(
+        cls,
+        query: str,
+        analysis: QueryAnalysis,
+        language: Optional[str],
+    ) -> QueryAnalysis:
+        """Force a deterministic budtender refusal for PI-style non-search queries."""
+        if analysis.is_search_query or not detect_prompt_injection(query):
+            return analysis
+
+        logger.info("Applying deterministic non-search security refusal")
+        analysis.natural_response = cls._security_fallback(language)
+        analysis.suggested_follow_ups = cls._security_follow_ups(language)
+        return analysis
 
     @classmethod
     async def _iter_safe_stream_chunks(
@@ -377,6 +404,9 @@ class SmartRAGService:
 
         # Safety net: reclassify if LLM missed a strain mention
         self._reclassify_if_strain_mentioned(analysis, query, session_strains)
+        analysis = self._apply_non_search_security_override(
+            query, analysis, detected_language
+        )
 
         # --- Branch: non-search ---
         if not analysis.is_search_query:
@@ -756,6 +786,9 @@ class SmartRAGService:
 
                 # Safety net: reclassify if LLM missed a strain mention
                 self._reclassify_if_strain_mentioned(analysis, query, session_strains)
+                analysis = self._apply_non_search_security_override(
+                    query, analysis, detected_language
+                )
 
                 # Non-search branch
                 if not analysis.is_search_query:
