@@ -222,6 +222,13 @@ def evaluate_case(case: Dict) -> CaseResult:
                          check_field(expected["is_follow_up"], actual))
         field_results.append(fr)
 
+    # is_off_topic
+    if "is_off_topic" in expected:
+        actual = filters.get("is_off_topic", False)
+        fr = FieldResult("is_off_topic", expected["is_off_topic"], actual,
+                         check_field(expected["is_off_topic"], actual))
+        field_results.append(fr)
+
     # detected_category
     if "detected_category" in expected:
         actual = filters.get("category")

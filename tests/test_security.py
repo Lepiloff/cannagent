@@ -5,7 +5,9 @@ and schema validation (message length, language whitelist).
 """
 
 import pytest
+from unittest.mock import MagicMock
 from app.core.input_sanitizer import sanitize_input, detect_prompt_injection, check_output_leakage
+from app.core.streamlined_analyzer import StreamlinedQueryAnalyzer
 from app.models.schemas import ChatRequest
 from pydantic import ValidationError
 
@@ -195,3 +197,42 @@ class TestChatRequestValidation:
         """Empty message passes schema — pipeline handles it as non-search."""
         req = ChatRequest(message="")
         assert req.message == ""
+
+
+# ---------------------------------------------------------------------------
+# QueryAnalysis off-topic parsing
+# ---------------------------------------------------------------------------
+
+class TestOffTopicParsing:
+    def test_parse_result_normalizes_off_topic_flag(self):
+        analyzer = StreamlinedQueryAnalyzer(MagicMock())
+
+        result = analyzer._parse_result(
+            {
+                "is_search_query": False,
+                "is_off_topic": "true",
+                "natural_response": "Out of scope",
+                "suggested_follow_ups": [],
+            },
+            "what's the weather like",
+            "en",
+        )
+
+        assert result.is_search_query is False
+        assert result.is_off_topic is True
+        assert result.detected_language == "en"
+
+    def test_parse_result_defaults_off_topic_to_false(self):
+        analyzer = StreamlinedQueryAnalyzer(MagicMock())
+
+        result = analyzer._parse_result(
+            {
+                "is_search_query": False,
+                "natural_response": "Cannabis can affect people differently.",
+                "suggested_follow_ups": ["What about CBD?"],
+            },
+            "what is THC",
+            "en",
+        )
+
+        assert result.is_off_topic is False

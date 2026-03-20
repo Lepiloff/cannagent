@@ -184,6 +184,26 @@ class SmartRAGService:
         return info
 
     @staticmethod
+    def _off_topic_response(language: Optional[str]) -> str:
+        """Deterministic response for clearly out-of-scope requests."""
+        if language == "en":
+            return (
+                "I can only help with cannabis-related topics such as strains, effects, "
+                "flavors, terpenes, and product recommendations. What cannabis question can I help with?"
+            )
+        return (
+            "Solo puedo ayudar con temas relacionados con cannabis, como cepas, efectos, "
+            "sabores, terpenos y recomendaciones. ¿Con qué pregunta sobre cannabis te ayudo?"
+        )
+
+    @staticmethod
+    def _off_topic_follow_ups(language: Optional[str]) -> List[str]:
+        """Suggested next steps for out-of-scope requests."""
+        if language == "en":
+            return ["Strains for sleep", "High CBD options", "Relaxing indicas"]
+        return ["Cepas para dormir", "Opciones con alto CBD", "Indicas relajantes"]
+
+    @staticmethod
     def _security_fallback(language: Optional[str]) -> str:
         """Generic safe response used when output must be scrubbed."""
         if language == "en":
@@ -210,6 +230,21 @@ class SmartRAGService:
         if language == "en":
             return ["Strains for sleep", "High CBD options", "Relaxing indicas"]
         return ["Cepas para dormir", "Opciones con alto CBD", "Indicas relajantes"]
+
+    @classmethod
+    def _apply_off_topic_override(
+        cls,
+        analysis: QueryAnalysis,
+        language: Optional[str],
+    ) -> QueryAnalysis:
+        """Force a deterministic scope reminder for clearly out-of-topic non-search queries."""
+        if analysis.is_search_query or not analysis.is_off_topic:
+            return analysis
+
+        logger.info("Applying deterministic off-topic non-search refusal")
+        analysis.natural_response = cls._off_topic_response(language)
+        analysis.suggested_follow_ups = cls._off_topic_follow_ups(language)
+        return analysis
 
     @classmethod
     def _apply_non_search_security_override(
@@ -404,6 +439,7 @@ class SmartRAGService:
 
         # Safety net: reclassify if LLM missed a strain mention
         self._reclassify_if_strain_mentioned(analysis, query, session_strains)
+        analysis = self._apply_off_topic_override(analysis, detected_language)
         analysis = self._apply_non_search_security_override(
             query, analysis, detected_language
         )
@@ -416,7 +452,10 @@ class SmartRAGService:
             return await run_db(
                 db_svc._build_streamlined_response,
                 analysis, [], session,
-                {"is_search_query": False, "reason": "greeting_or_general_question"}
+                {
+                    "is_search_query": False,
+                    "reason": "off_topic" if analysis.is_off_topic else "greeting_or_general_question",
+                }
             )
 
         # --- Context inheritance: "otras opciones" / "more options" ---
@@ -786,6 +825,7 @@ class SmartRAGService:
 
                 # Safety net: reclassify if LLM missed a strain mention
                 self._reclassify_if_strain_mentioned(analysis, query, session_strains)
+                analysis = self._apply_off_topic_override(analysis, detected_language)
                 analysis = self._apply_non_search_security_override(
                     query, analysis, detected_language
                 )
@@ -797,7 +837,10 @@ class SmartRAGService:
                     response = await run_db(
                         db_svc._build_streamlined_response,
                         analysis, [], session,
-                        {"is_search_query": False, "reason": "greeting_or_general_question"}
+                        {
+                            "is_search_query": False,
+                            "reason": "off_topic" if analysis.is_off_topic else "greeting_or_general_question",
+                        }
                     )
                     yield {"type": "metadata", "data": _json.loads(response.model_dump_json())}
                     yield {"type": "done"}
@@ -1585,6 +1628,10 @@ class SmartRAGService:
         # Build compact strains
         compact_strains = self._build_compact_strains(strains, language=analysis.detected_language)
 
+        response_filters = dict(filters_applied)
+        response_filters.setdefault("is_search_query", analysis.is_search_query)
+        response_filters.setdefault("is_off_topic", analysis.is_off_topic)
+
         # Quick actions
         quick_actions = analysis.suggested_follow_ups or self._generate_contextual_actions(
             strains, analysis.detected_language, session
@@ -1594,7 +1641,7 @@ class SmartRAGService:
             response=response_text,
             recommended_strains=compact_strains,
             detected_intent=analysis.detected_category or 'search',
-            filters_applied=filters_applied,
+            filters_applied=response_filters,
             session_id=session.session_id,
             query_type='streamlined_search',
             language=analysis.detected_language,

@@ -9,6 +9,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": false,
         "is_follow_up": false,
         "detected_language": "en"
       },
@@ -22,6 +23,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": false,
         "is_follow_up": false,
         "detected_language": "es"
       },
@@ -35,6 +37,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": false,
         "is_follow_up": false
       },
       "expected_strains": 0,
@@ -313,6 +316,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": true,
         "is_follow_up": false,
         "detected_language": "en"
       },
@@ -713,6 +717,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": true,
         "is_follow_up": false,
         "detected_language": "en"
       },
@@ -726,6 +731,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": true,
         "is_follow_up": false,
         "detected_language": "es"
       },
@@ -739,6 +745,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": true,
         "is_follow_up": false,
         "detected_language": "en"
       },
@@ -752,6 +759,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": true,
         "is_follow_up": false,
         "detected_language": "en"
       },
@@ -765,6 +773,7 @@
       "session_context": null,
       "expected": {
         "is_search_query": false,
+        "is_off_topic": true,
         "is_follow_up": false,
         "detected_language": "es"
       },

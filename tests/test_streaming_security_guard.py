@@ -40,6 +40,42 @@ class TestStreamingLeakageGuard:
 
         assert "".join(chunks) == "I recommend Blue Dream for relaxation."
 
+class TestOffTopicOverride:
+    def test_off_topic_non_search_gets_deterministic_scope_refusal(self):
+        from app.core.streamlined_analyzer import QueryAnalysis
+
+        analysis = QueryAnalysis(
+            is_search_query=False,
+            is_off_topic=True,
+            natural_response="Sure, here is the weather forecast.",
+            suggested_follow_ups=["Tell me a joke"],
+            detected_language="en",
+            confidence=0.9,
+        )
+
+        updated = SmartRAGService._apply_off_topic_override(analysis, "en")
+
+        assert updated.natural_response == SmartRAGService._off_topic_response("en")
+        assert updated.suggested_follow_ups == SmartRAGService._off_topic_follow_ups("en")
+
+    def test_general_cannabis_non_search_is_not_marked_off_topic(self):
+        from app.core.streamlined_analyzer import QueryAnalysis
+
+        analysis = QueryAnalysis(
+            is_search_query=False,
+            is_off_topic=False,
+            natural_response="THC is the main psychoactive cannabinoid in cannabis.",
+            suggested_follow_ups=["What about CBD?"],
+            detected_language="en",
+            confidence=0.9,
+        )
+
+        updated = SmartRAGService._apply_off_topic_override(analysis, "en")
+
+        assert updated.natural_response == "THC is the main psychoactive cannabinoid in cannabis."
+        assert updated.suggested_follow_ups == ["What about CBD?"]
+
+
 class TestNonSearchSecurityOverride:
     def test_persona_adoption_non_search_gets_deterministic_refusal(self):
         from app.core.streamlined_analyzer import QueryAnalysis

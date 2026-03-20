@@ -59,6 +59,10 @@ class QueryAnalysis(BaseModel):
 
     # Query intent detection (CRITICAL for avoiding unnecessary searches)
     is_search_query: bool = Field(default=True, description="Whether user is requesting strain search/recommendation")
+    is_off_topic: bool = Field(
+        default=False,
+        description="Whether the query is outside cannabis-related topics and should receive a fixed refusal"
+    )
 
     # Specific strain query detection (return only 1 strain, not 5 similar)
     specific_strain_name: Optional[str] = Field(None, description="Exact strain name if user asks about specific strain")
@@ -495,6 +499,19 @@ Analyze the user's query and provide:
    **IMPORTANT**: Default to TRUE if unclear. Only set FALSE for clear non-search queries.
    **IMPORTANT**: If user references a previously recommended strain ("that one", "it", "ese", "the first one") and asks about its properties/effects/side effects, set is_search_query=TRUE and is_follow_up=TRUE.
 
+0.25. **Off-Topic Detection** (CRITICAL for deterministic refusals):
+
+   **is_off_topic = TRUE** if user is clearly asking for something outside cannabis topics:
+   - Weather, news, sports, politics, coding, homework, travel, math, general jokes, poems
+   - Pure roleplay/persona requests with no cannabis need: "be a pirate", "act like a cat", "tell me a joke"
+   - General-purpose assistant tasks unrelated to cannabis
+
+   **is_off_topic = FALSE** for:
+   - Greetings, thanks, or asking what you can do
+   - General cannabis education: "what is THC", "what are terpenes", "difference between indica and sativa"
+   - Any strain search/recommendation query
+   - Mixed queries that contain a real cannabis request plus an ignored off-topic or injection tail
+
 0.5. **Specific Strain Query Detection** (CRITICAL - determines if user asks about exact strain):
 
    **specific_strain_name = "Strain Name"** if user asks about a SPECIFIC strain:
@@ -614,7 +631,8 @@ Analyze the user's query and provide:
 6. **Natural Response**:
    - If is_search_query=true AND specific_strain_name is null: set natural_response to "." (single dot placeholder — it will be regenerated later with actual strain data)
    - If is_search_query=true AND specific_strain_name is set: generate a brief description of that strain (2-3 sentences)
-   - If is_search_query=false: generate helpful, friendly response in the target language (2-3 sentences)
+   - If is_search_query=false AND is_off_topic=false: generate helpful, friendly response in the target language (2-3 sentences)
+   - If is_search_query=false AND is_off_topic=true: generate a brief cannabis-scope reminder in the target language (the system may replace it with a fixed response)
    - If is_follow_up=true: set natural_response to "Follow-up processed" (ignored by system)
 
 7. **Follow-up Suggestions**:
@@ -647,6 +665,7 @@ When is_follow_up=true, you MUST follow these rules for "natural_response":
 RESPONSE FORMAT (JSON only):
 {{
   "is_search_query": true|false,
+  "is_off_topic": true|false,
   "specific_strain_name": "Strain Name"|null,
   "detected_category": "Indica"|"Sativa"|"Hybrid"|null,
   "thc_level": "low"|"medium"|"high"|null,
@@ -667,36 +686,40 @@ EXAMPLES (6 key scenarios):
 
 1. NON-SEARCH (greeting/help):
 Query: "hey, how can you help me"
-{{"is_search_query": false, "is_follow_up": false, "natural_response": "I'm your cannabis budtender! I can help you find strains for relaxation, energy, pain relief, or specific flavors.", "suggested_follow_ups": ["Relaxing strains", "For sleep", "For pain"], "confidence": 0.95}}
+{{"is_search_query": false, "is_off_topic": false, "is_follow_up": false, "natural_response": "I'm your cannabis budtender! I can help you find strains for relaxation, energy, pain relief, or specific flavors.", "suggested_follow_ups": ["Relaxing strains", "For sleep", "For pain"], "confidence": 0.95}}
 
-2. SEARCH with medical use:
+2. OFF-TOPIC:
+Query: "what's the weather like today?"
+{{"is_search_query": false, "is_off_topic": true, "is_follow_up": false, "natural_response": "I can only help with cannabis-related topics, strain recommendations, effects, and terpene information.", "suggested_follow_ups": ["Relaxing strains", "For sleep", "High CBD options"], "confidence": 0.98}}
+
+3. SEARCH with medical use:
 Query: "which strains help with pain?"
 {{"is_search_query": true, "is_follow_up": false, "detected_category": null, "required_helps_with": ["pain"], "natural_response": ".", "suggested_follow_ups": ["Indica or sativa?", "High CBD options?"], "confidence": 0.9}}
 
-3. SEARCH with multiple filters:
+4. SEARCH with multiple filters:
 Query: "suggest me indica with tropical flavor and high thc"
 {{"is_search_query": true, "is_follow_up": false, "detected_category": "Indica", "thc_level": "high", "required_flavors": ["tropical"], "natural_response": ".", "suggested_follow_ups": ["Something sweeter?", "Help with sleep?"], "confidence": 0.95}}
 
-4. SPECIFIC STRAIN:
+5. SPECIFIC STRAIN:
 Query: "tell me about Northern Lights"
 {{"is_search_query": true, "specific_strain_name": "Northern Lights", "is_follow_up": false, "natural_response": "Northern Lights is a classic indica known for its relaxing and sedating effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
 
-5. FOLLOW-UP (compare):
+6. FOLLOW-UP (compare):
 Context: Recommended strains: Super Silver Haze (21% THC), Chocolope (22% THC)
 Query: "which has higher THC"
 {{"is_search_query": true, "is_follow_up": true, "follow_up_intent": {{"action": "compare", "field": "thc", "order": "desc"}}, "natural_response": "Follow-up processed", "suggested_follow_ups": ["Effects?", "CBD options?"], "confidence": 0.95}}
 
-6. NOT FOLLOW-UP (new criteria):
+7. NOT FOLLOW-UP (new criteria):
 Context: Recommended strains: G13 (Indica), Truffle (Hybrid)
 Query: "now show me sativa strains for energy"
 {{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "detected_category": "Sativa", "required_effects": ["energetic"], "natural_response": ".", "suggested_follow_ups": ["THC level?", "Flavor?"], "confidence": 0.95}}
 
-7. NOT FOLLOW-UP (new attribute = new search):
+8. NOT FOLLOW-UP (new attribute = new search):
 Context: Recommended strains: Dolato (Indica, 20% THC), King Louis (Indica, 20% THC)
 Query: "show me something with myrcene terpene for pain"
 {{"is_search_query": true, "is_follow_up": false, "follow_up_intent": null, "required_terpenes": ["myrcene"], "required_helps_with": ["pain"], "natural_response": ".", "suggested_follow_ups": ["Indica?", "High THC?"], "confidence": 0.9}}
 
-8. FOLLOW-UP (question about recommended strain):
+9. FOLLOW-UP (question about recommended strain):
 Context: Recommended strains: Gumbo (Indica), Bubba Kush (Indica, 18% THC)
 Query: "does that one have side effects?"
 {{"is_search_query": true, "is_follow_up": true, "follow_up_intent": {{"action": "describe"}}, "natural_response": "Follow-up processed", "suggested_follow_ups": ["Compare THC?", "Other options?"], "confidence": 0.9}}
@@ -803,6 +826,12 @@ Respond with JSON only."""
             elif isinstance(is_search_query, str):
                 is_search_query = is_search_query.lower() in ["true", "yes", "1"]
 
+            is_off_topic = raw_result.get("is_off_topic", False)
+            if is_off_topic is None:
+                is_off_topic = False
+            elif isinstance(is_off_topic, str):
+                is_off_topic = is_off_topic.lower() in ["true", "yes", "1"]
+
             # Нормализация specific strain name
             specific_strain_name = raw_result.get("specific_strain_name")
             if isinstance(specific_strain_name, str):
@@ -880,6 +909,7 @@ Respond with JSON only."""
                 thc_level=thc_level,
                 cbd_level=cbd_level,
                 is_search_query=is_search_query,
+                is_off_topic=is_off_topic,
                 specific_strain_name=specific_strain_name,
                 is_follow_up=is_follow_up,
                 follow_up_intent=follow_up_intent,
