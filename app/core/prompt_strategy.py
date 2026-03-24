@@ -67,24 +67,29 @@ Analyze the user's query and provide:
    - Any strain search/recommendation query
    - Mixed queries that contain a real cannabis request plus an ignored off-topic or injection tail
 
-0.5. **Specific Strain Query Detection** (CRITICAL - determines if user asks about exact strain):
+0.5. **Specific Strain Query Detection** (CRITICAL - determines if user asks about exact strain(s)):
 
-   **specific_strain_name = "Strain Name"** if user asks about a SPECIFIC strain:
-   - "do you have info about Tropicana Cookies" → "Tropicana Cookies"
-   - "tell me about Northern Lights" → "Northern Lights"
-   - "what is Blue Dream" → "Blue Dream"
-   - "información sobre ACDC" → "ACDC"
-   - "tienes la cepa Harlequin" → "Harlequin"
+   **specific_strain_names = ["Strain Name"]** if user asks about a SPECIFIC strain:
+   - "do you have info about Tropicana Cookies" → ["Tropicana Cookies"]
+   - "tell me about Northern Lights" → ["Northern Lights"]
+   - "what is Blue Dream" → ["Blue Dream"]
+   - "información sobre ACDC" → ["ACDC"]
+   - "tienes la cepa Harlequin" → ["Harlequin"]
 
-   **specific_strain_name = null** if user wants RECOMMENDATIONS/SEARCH:
+   **specific_strain_names = ["Strain A", "Strain B"]** if user asks about MULTIPLE specific strains:
+   - "what's the difference between Blue Dream and Sour Diesel" → ["Blue Dream", "Sour Diesel"]
+   - "compare OG Kush and Northern Lights" → ["OG Kush", "Northern Lights"]
+   - "cuál es mejor, ACDC o Harlequin" → ["ACDC", "Harlequin"]
+
+   **specific_strain_names = null** if user wants RECOMMENDATIONS/SEARCH:
    - "suggest me indica strains" → null (searching, not specific)
    - "show me high THC strains" → null (searching)
    - "what's good for sleep" → null (recommendations)
 
    **IMPORTANT**:
-   - Extract EXACT strain name as written by user (capitalization OK)
-   - Only set if user clearly references ONE specific strain
-   - If specific strain detected, return ONLY that strain (limit=1), not similar ones
+   - Extract EXACT strain names as written by user (capitalization OK)
+   - Return as a list even for a single strain
+   - If specific strain(s) detected, return ONLY those strains, not similar ones
 
 1. **Category Detection** (for SQL pre-filtering):
    - ONLY set if user explicitly mentions "indica", "sativa", or "hybrid"
@@ -181,8 +186,8 @@ Analyze the user's query and provide:
    You can set natural_response to a placeholder like "Follow-up processed".
 
 6. **Natural Response**:
-   - If is_search_query=true AND specific_strain_name is null: set natural_response to "." (single dot placeholder — it will be regenerated later with actual strain data)
-   - If is_search_query=true AND specific_strain_name is set: generate a brief description of that strain (2-3 sentences)
+   - If is_search_query=true AND specific_strain_names is null: set natural_response to "." (single dot placeholder — it will be regenerated later with actual strain data)
+   - If is_search_query=true AND specific_strain_names is set: generate a brief description of those strain(s) (2-3 sentences)
    - If is_search_query=false AND is_off_topic=false: generate helpful, friendly response in the target language (2-3 sentences)
    - If is_search_query=false AND is_off_topic=true: generate a brief cannabis-scope reminder in the target language (the system may replace it with a fixed response)
    - If is_follow_up=true: set natural_response to "Follow-up processed" (ignored by system)
@@ -218,7 +223,7 @@ RESPONSE FORMAT (JSON only):
 {{
   "is_search_query": true|false,
   "is_off_topic": true|false,
-  "specific_strain_name": "Strain Name"|null,
+  "specific_strain_names": ["Strain Name"]|null,
   "detected_category": "Indica"|"Sativa"|"Hybrid"|null,
   "thc_level": "low"|"medium"|"high"|null,
   "cbd_level": "low"|"medium"|"high"|null,
@@ -252,9 +257,13 @@ Query: "which strains help with pain?"
 Query: "suggest me indica with tropical flavor and high thc"
 {{"is_search_query": true, "is_follow_up": false, "detected_category": "Indica", "thc_level": "high", "required_flavors": ["tropical"], "natural_response": ".", "suggested_follow_ups": ["Something sweeter?", "Help with sleep?"], "confidence": 0.95}}
 
-5. SPECIFIC STRAIN:
+5. SPECIFIC STRAIN (single):
 Query: "tell me about Northern Lights"
-{{"is_search_query": true, "specific_strain_name": "Northern Lights", "is_follow_up": false, "natural_response": "Northern Lights is a classic indica known for its relaxing and sedating effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
+{{"is_search_query": true, "specific_strain_names": ["Northern Lights"], "is_follow_up": false, "natural_response": "Northern Lights is a classic indica known for its relaxing and sedating effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
+
+5b. SPECIFIC STRAINS (comparison):
+Query: "what's the difference between Blue Dream and Sour Diesel"
+{{"is_search_query": true, "specific_strain_names": ["Blue Dream", "Sour Diesel"], "is_follow_up": false, "natural_response": ".", "suggested_follow_ups": ["Which is stronger?", "Effects?"], "confidence": 0.95}}
 
 6. FOLLOW-UP (compare):
 Context: Recommended strains: Super Silver Haze (21% THC), Chocolope (22% THC)
@@ -294,7 +303,7 @@ RULES:
 
 **is_off_topic**: true only for clear non-cannabis requests such as weather, sports, news, coding help, general jokes, or persona/roleplay requests with no cannabis need. false for greetings, thanks, help, cannabis education, and mixed queries that still contain a real cannabis request.
 
-**specific_strain_name**: exact name if user asks about ONE specific strain; null for general search.
+**specific_strain_names**: list of exact name(s) if user asks about specific strain(s); e.g. ["Blue Dream"] or ["Blue Dream","Sour Diesel"]; null for general search.
 
 **detected_category**: "Indica"|"Sativa"|"Hybrid"|null — ONLY if user explicitly mentions the category. Do NOT infer from effects/mood.
 
@@ -320,8 +329,8 @@ Use DB context above for available values. Return null if not mentioned.
 - strain_indices: [0,1,...] (for select, 0-based)
 
 **natural_response**:
-- is_search_query=true, no specific strain → "." (regenerated later)
-- is_search_query=true, specific strain → brief 2-3 sentence description
+- is_search_query=true, no specific strain(s) → "." (regenerated later)
+- is_search_query=true, specific strain(s) → brief 2-3 sentence description
 - is_search_query=false and is_off_topic=false → helpful response in target language
 - is_search_query=false and is_off_topic=true → brief cannabis-scope reminder in target language
 - is_follow_up=true → "Follow-up processed"
@@ -329,7 +338,7 @@ Use DB context above for available values. Return null if not mentioned.
 **suggested_follow_ups**: 2-3 contextual follow-up questions in target language.
 
 RESPONSE FORMAT (JSON only, no markdown):
-{{"is_search_query":true|false,"is_off_topic":true|false,"specific_strain_name":"Name"|null,"detected_category":"Indica"|"Sativa"|"Hybrid"|null,"thc_level":"low"|"medium"|"high"|null,"cbd_level":"low"|"medium"|"high"|null,"is_follow_up":true|false,"follow_up_intent":{{"action":"...","field":null,"order":null,"filter_value":null,"strain_indices":null}}|null,"required_flavors":[]|null,"required_effects":[]|null,"required_helps_with":[]|null,"exclude_negatives":[]|null,"required_terpenes":[]|null,"natural_response":"...","suggested_follow_ups":["...","..."],"confidence":0.9}}
+{{"is_search_query":true|false,"is_off_topic":true|false,"specific_strain_names":["Name"]|null,"detected_category":"Indica"|"Sativa"|"Hybrid"|null,"thc_level":"low"|"medium"|"high"|null,"cbd_level":"low"|"medium"|"high"|null,"is_follow_up":true|false,"follow_up_intent":{{"action":"...","field":null,"order":null,"filter_value":null,"strain_indices":null}}|null,"required_flavors":[]|null,"required_effects":[]|null,"required_helps_with":[]|null,"exclude_negatives":[]|null,"required_terpenes":[]|null,"natural_response":"...","suggested_follow_ups":["...","..."],"confidence":0.9}}
 
 EXAMPLES:
 Search: "indica high thc for sleep" → {{"is_search_query":true,"is_off_topic":false,"detected_category":"Indica","thc_level":"high","required_helps_with":["insomnia"],"natural_response":".","suggested_follow_ups":["CBD options?","Specific flavor?"],"confidence":0.95}}

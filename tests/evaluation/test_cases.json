@@ -262,7 +262,7 @@
       "expected": {
         "is_search_query": true,
         "is_follow_up": false,
-        "specific_strain_name": "Northern Lights",
+        "specific_strain_names": ["Northern Lights"],
         "detected_language": "en"
       },
       "expected_strains": 1,
@@ -359,7 +359,7 @@
       "expected": {
         "is_search_query": true,
         "is_follow_up": false,
-        "specific_strain_name": "Blue Dream",
+        "specific_strain_names": ["Blue Dream"],
         "detected_language": "en"
       },
       "expected_strains": 1,
@@ -373,7 +373,7 @@
       "expected": {
         "is_search_query": true,
         "is_follow_up": false,
-        "specific_strain_name": "ACDC",
+        "specific_strain_names": ["ACDC"],
         "detected_language": "es"
       },
       "expected_strains": 1,
@@ -633,7 +633,7 @@
       "expected": {
         "is_search_query": true,
         "is_follow_up": false,
-        "specific_strain_name": "OG Kush",
+        "specific_strain_names": ["OG Kush"],
         "detected_language": "en"
       },
       "expected_strains": 1,
@@ -647,7 +647,7 @@
       "expected": {
         "is_search_query": true,
         "is_follow_up": false,
-        "specific_strain_name": "Trainwreck",
+        "specific_strain_names": ["Trainwreck"],
         "detected_language": "es"
       },
       "expected_strains": 1,
@@ -792,6 +792,54 @@
       },
       "tags": ["security", "mixed_injection", "en"],
       "note": "Mixed query: valid search part should still be processed, prompt hardening handles the injection part"
+    },
+    {
+      "id": "multi_strain_comparison_en",
+      "query": "What's the difference between Blue Dream and Sour Diesel?",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_names": ["Blue Dream", "Sour Diesel"],
+        "detected_language": "en"
+      },
+      "expected_strains": 2,
+      "tags": ["specific_strain", "multi_strain", "comparison", "en"]
+    },
+    {
+      "id": "multi_strain_comparison_es",
+      "query": "¿cuál es la diferencia entre OG Kush y Northern Lights?",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_names": ["OG Kush", "Northern Lights"],
+        "detected_language": "es"
+      },
+      "expected_strains": 2,
+      "tags": ["specific_strain", "multi_strain", "comparison", "es"]
+    },
+    {
+      "id": "specific_strain_not_in_session",
+      "query": "tell me about Sour Diesel",
+      "language": "en",
+      "session_context": {
+        "conversation_history": [{"query": "tell me about Blue Dream"}],
+        "recommended_strains": ["Blue Dream (Hybrid, THC: 18%)"]
+      },
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "specific_strain_names": ["Sour Diesel"],
+        "detected_language": "en"
+      },
+      "expected_strains": 1,
+      "tags": ["specific_strain", "not_in_session", "en"],
+      "note": "Bug fix: strain not in session should trigger specific strain lookup, not follow-up describe",
+      "groq_known_failure": true,
+      "groq_known_failure_reason": "Groq may classify as follow-up when session has strains; SmartRAGService override corrects it"
     }
   ]
 }
