@@ -266,16 +266,18 @@ def evaluate_case(case: Dict) -> CaseResult:
                          check_field(expected["detected_language"], actual))
         field_results.append(fr)
 
-    # specific_strain_name
-    if "specific_strain_name" in expected:
-        expected_name = expected["specific_strain_name"]
-        # Check if the expected strain is in results
-        found = any(
-            s.get("name", "").lower() == expected_name.lower()
-            for s in strains
+    # specific_strain_names (also supports legacy "specific_strain_name" key)
+    expected_strain_names = expected.get("specific_strain_names") or (
+        [expected["specific_strain_name"]] if "specific_strain_name" in expected else None
+    )
+    if expected_strain_names:
+        actual_names = [s.get("name", "") for s in strains]
+        found = all(
+            any(a.lower() == en.lower() for a in actual_names)
+            for en in expected_strain_names
         )
-        fr = FieldResult("specific_strain_name", expected_name,
-                         strains[0]["name"] if strains else None, found)
+        fr = FieldResult("specific_strain_names", expected_strain_names,
+                         actual_names or None, found)
         field_results.append(fr)
 
     # --- Check strain count ---
@@ -510,7 +512,7 @@ async def evaluate_case_direct(case: Dict, analyzer, system_prompt: str = "") ->
 
     direct_fields = [
         "is_search_query", "is_follow_up", "detected_language",
-        "detected_category", "thc_level", "cbd_level", "specific_strain_name",
+        "detected_category", "thc_level", "cbd_level",
     ]
     field_results = []
     for fname in direct_fields:
@@ -519,6 +521,19 @@ async def evaluate_case_direct(case: Dict, analyzer, system_prompt: str = "") ->
             fr = FieldResult(fname, expected[fname], actual,
                              check_field(expected[fname], actual))
             field_results.append(fr)
+
+    # specific_strain_names (supports both old "specific_strain_name" and new "specific_strain_names")
+    expected_strain_names = expected.get("specific_strain_names") or (
+        [expected["specific_strain_name"]] if "specific_strain_name" in expected else None
+    )
+    if expected_strain_names:
+        actual_names = analysis.specific_strain_names
+        found = (
+            actual_names is not None
+            and set(n.lower() for n in expected_strain_names) == set(n.lower() for n in actual_names)
+        )
+        fr = FieldResult("specific_strain_names", expected_strain_names, actual_names, found)
+        field_results.append(fr)
 
     overall = all(fr.passed for fr in field_results)
     return CaseResult(

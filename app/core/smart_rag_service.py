@@ -122,6 +122,12 @@ class SmartRAGService:
         return None
 
     @staticmethod
+    def _resolve_strains_in_session(names: List[str], session_strains) -> list:
+        """Return the subset of session_strains that match any of the given names (case-insensitive)."""
+        target = {n.lower() for n in names}
+        return [s for s in session_strains if s.name and s.name.lower() in target]
+
+    @staticmethod
     def _reclassify_if_strain_mentioned(analysis, query: str, session_strains):
         """
         Safety net: if LLM misclassified a strain-specific query as non-search,
@@ -496,6 +502,24 @@ class SmartRAGService:
             logger.info("🔄 Override follow-up → new search (new attributes detected)")
             analysis.is_follow_up = False
 
+        # Override: specific strain(s) requested — resolve against session first
+        if analysis.is_follow_up and analysis.specific_strain_names and session_strains:
+            resolved = self._resolve_strains_in_session(analysis.specific_strain_names, session_strains)
+            if len(resolved) == len(analysis.specific_strain_names):
+                # All requested strains found in session → narrow session to just these
+                logger.info(
+                    f"🎯 Narrowing follow-up to {len(resolved)} named strain(s) from session"
+                )
+                session_strains = resolved
+            else:
+                # Not all found → escape follow-up, use specific strain DB lookup
+                logger.info(
+                    f"🔄 Override follow-up → specific strain "
+                    f"({[n for n in analysis.specific_strain_names if not any(s.name.lower() == n.lower() for s in resolved)]} not in session)"
+                )
+                analysis.is_follow_up = False
+                analysis.follow_up_intent = None
+
         if analysis.is_follow_up and session_strains:
             logger.info("🔄 Follow-up query detected - using deterministic executor")
             intent = analysis.follow_up_intent
@@ -552,36 +576,53 @@ class SmartRAGService:
                 {"is_search_query": True, "is_follow_up": True, "deterministic_executor": True}
             )
 
-        # --- Branch: specific strain (DB + async embedding fallback) ---
-        if analysis.specific_strain_name:
-            logger.info(f"🎯 Specific strain query detected: '{analysis.specific_strain_name}'")
+        # --- Branch: specific strain(s) (DB + async embedding fallback) ---
+        if analysis.specific_strain_names:
+            logger.info(f"🎯 Specific strain query detected: {analysis.specific_strain_names}")
 
-            def _find_specific_strain():
-                specific_strain = db_svc.repository.db.query(StrainModel).filter(
-                    StrainModel.name.ilike(analysis.specific_strain_name),
+            requested_count = len(analysis.specific_strain_names)
+
+            def _find_specific_strains():
+                from sqlalchemy import or_
+                conditions = [StrainModel.name.ilike(n) for n in analysis.specific_strain_names]
+                found = db_svc.repository.db.query(StrainModel).filter(
+                    or_(*conditions),
                     StrainModel.active == True
-                ).first()
-                if specific_strain:
-                    logger.info(f"✅ Found specific strain: {specific_strain.name}")
-                    return [specific_strain], False
+                ).all()
+                if found:
+                    logger.info(f"✅ Found {len(found)}/{requested_count} specific strain(s): {[s.name for s in found]}")
+                    # Check how many are still missing
+                    found_lower = {s.name.lower() for s in found}
+                    missing = [n for n in analysis.specific_strain_names if n.lower() not in found_lower]
+                    return found, missing
                 else:
-                    logger.warning(f"❌ Specific strain '{analysis.specific_strain_name}' not found - searching closest match")
-                    all_strains = db_svc.repository.db.query(StrainModel).filter(
-                        StrainModel.active == True
-                    ).all()
-                    return all_strains, True  # need vector search fallback
+                    logger.warning(f"❌ Specific strain(s) {analysis.specific_strain_names} not found - searching closest match")
+                    return [], analysis.specific_strain_names
 
-            found_strains, needs_vector_search = await run_db(_find_specific_strain)
+            exact_matches, missing_names = await run_db(_find_specific_strains)
 
-            if needs_vector_search and found_strains:
-                # Async embedding (no thread) + DB distance calc (thread)
-                query_emb = await db_svc.vector_search.llm.agenerate_embedding(analysis.specific_strain_name)
-                result_strains = await run_db(
-                    db_svc.vector_search._search_with_embedding,
-                    query_emb, found_strains, analysis.detected_language, 1
+            if missing_names:
+                # Resolve missing names via vector search
+                logger.info(f"🔍 Resolving {len(missing_names)} missing strain(s) via vector search: {missing_names}")
+                all_strains = await run_db(
+                    lambda: db_svc.repository.db.query(StrainModel).filter(StrainModel.active == True).all()
                 )
+                # Exclude already found strains from the pool
+                exact_ids = {s.id for s in exact_matches}
+                pool = [s for s in all_strains if s.id not in exact_ids]
+                if pool:
+                    # Embed the missing names for better vector relevance
+                    search_text = ", ".join(missing_names)
+                    query_emb = await db_svc.vector_search.llm.agenerate_embedding(search_text)
+                    vector_matches = await run_db(
+                        db_svc.vector_search._search_with_embedding,
+                        query_emb, pool, analysis.detected_language, len(missing_names)
+                    )
+                    result_strains = exact_matches + vector_matches
+                else:
+                    result_strains = exact_matches
             else:
-                result_strains = found_strains
+                result_strains = exact_matches
 
             # Generate accurate response from actual DB data
             if result_strains:
@@ -598,7 +639,7 @@ class SmartRAGService:
             return await run_db(
                 db_svc._build_streamlined_response,
                 analysis, result_strains, session,
-                {"is_search_query": True, "specific_strain_query": True, "strain_name": analysis.specific_strain_name}
+                {"is_search_query": True, "specific_strain_query": True, "strain_names": analysis.specific_strain_names}
             )
 
         # --- Main search path ---
@@ -884,6 +925,22 @@ class SmartRAGService:
                     logger.info("🔄 Override follow-up → new search (new attributes detected)")
                     analysis.is_follow_up = False
 
+                # Override: specific strain(s) requested — resolve against session first
+                if analysis.is_follow_up and analysis.specific_strain_names and session_strains:
+                    resolved = self._resolve_strains_in_session(analysis.specific_strain_names, session_strains)
+                    if len(resolved) == len(analysis.specific_strain_names):
+                        logger.info(
+                            f"🎯 Narrowing follow-up to {len(resolved)} named strain(s) from session"
+                        )
+                        session_strains = resolved
+                    else:
+                        logger.info(
+                            f"🔄 Override follow-up → specific strain "
+                            f"({[n for n in analysis.specific_strain_names if not any(s.name.lower() == n.lower() for s in resolved)]} not in session)"
+                        )
+                        analysis.is_follow_up = False
+                        analysis.follow_up_intent = None
+
                 if analysis.is_follow_up and session_strains:
                     from app.core.follow_up_executor import detect_follow_up_intent_keywords
                     intent = analysis.follow_up_intent
@@ -959,27 +1016,43 @@ class SmartRAGService:
                         await self.session_manager.asave_session_with_backup(session)
                     return
 
-                # Specific strain branch
-                if analysis.specific_strain_name:
-                    def _find_specific():
-                        specific = db_svc.repository.db.query(StrainModel).filter(
-                            StrainModel.name.ilike(analysis.specific_strain_name),
-                            StrainModel.active == True
-                        ).first()
-                        if specific:
-                            return [specific], False
-                        all_s = db_svc.repository.db.query(StrainModel).filter(StrainModel.active == True).all()
-                        return all_s, True
+                # Specific strain(s) branch
+                if analysis.specific_strain_names:
+                    requested_count = len(analysis.specific_strain_names)
 
-                    found_strains, needs_vs = await run_db(_find_specific)
-                    if needs_vs and found_strains:
-                        query_emb = await db_svc.vector_search.llm.agenerate_embedding(analysis.specific_strain_name)
-                        result_strains = await run_db(
-                            db_svc.vector_search._search_with_embedding,
-                            query_emb, found_strains, analysis.detected_language, 1
+                    def _find_specific():
+                        from sqlalchemy import or_
+                        conditions = [StrainModel.name.ilike(n) for n in analysis.specific_strain_names]
+                        found = db_svc.repository.db.query(StrainModel).filter(
+                            or_(*conditions),
+                            StrainModel.active == True
+                        ).all()
+                        if found:
+                            found_lower = {s.name.lower() for s in found}
+                            missing = [n for n in analysis.specific_strain_names if n.lower() not in found_lower]
+                            return found, missing
+                        return [], analysis.specific_strain_names
+
+                    exact_matches, missing_names = await run_db(_find_specific)
+
+                    if missing_names:
+                        all_strains = await run_db(
+                            lambda: db_svc.repository.db.query(StrainModel).filter(StrainModel.active == True).all()
                         )
+                        exact_ids = {s.id for s in exact_matches}
+                        pool = [s for s in all_strains if s.id not in exact_ids]
+                        if pool:
+                            search_text = ", ".join(missing_names)
+                            query_emb = await db_svc.vector_search.llm.agenerate_embedding(search_text)
+                            vector_matches = await run_db(
+                                db_svc.vector_search._search_with_embedding,
+                                query_emb, pool, analysis.detected_language, len(missing_names)
+                            )
+                            result_strains = exact_matches + vector_matches
+                        else:
+                            result_strains = exact_matches
                     else:
-                        result_strains = found_strains
+                        result_strains = exact_matches
 
                     # Save session before streaming
                     analysis.natural_response = "..."
@@ -990,7 +1063,7 @@ class SmartRAGService:
                     response = await run_db(
                         db_svc._build_streamlined_response,
                         analysis, result_strains, session,
-                        {"is_search_query": True, "specific_strain_query": True}
+                        {"is_search_query": True, "specific_strain_query": True, "strain_names": analysis.specific_strain_names}
                     )
                     metadata_dict = _json.loads(response.model_dump_json())
                     metadata_dict["response"] = ""
@@ -1540,7 +1613,7 @@ class SmartRAGService:
             analysis.thc_level,
             analysis.cbd_level,
             analysis.detected_category,
-            analysis.specific_strain_name,
+            analysis.specific_strain_names,
         ]):
             return False
         _expand_re = re.compile(

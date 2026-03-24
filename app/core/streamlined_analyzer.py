@@ -64,8 +64,13 @@ class QueryAnalysis(BaseModel):
         description="Whether the query is outside cannabis-related topics and should receive a fixed refusal"
     )
 
-    # Specific strain query detection (return only 1 strain, not 5 similar)
-    specific_strain_name: Optional[str] = Field(None, description="Exact strain name if user asks about specific strain")
+    # Specific strain query detection (supports 1 or more named strains)
+    specific_strain_names: Optional[List[str]] = Field(None, description="Exact strain name(s) if user asks about specific strain(s)")
+
+    @property
+    def specific_strain_name(self) -> Optional[str]:
+        """Backward compat: return first strain name or None."""
+        return self.specific_strain_names[0] if self.specific_strain_names else None
 
     # Follow-up query detection
     is_follow_up: bool = Field(default=False, description="Whether this is a follow-up query referencing previous results")
@@ -514,22 +519,26 @@ Analyze the user's query and provide:
 
 0.5. **Specific Strain Query Detection** (CRITICAL - determines if user asks about exact strain):
 
-   **specific_strain_name = "Strain Name"** if user asks about a SPECIFIC strain:
-   - "do you have info about Tropicana Cookies" → "Tropicana Cookies"
-   - "tell me about Northern Lights" → "Northern Lights"
-   - "what is Blue Dream" → "Blue Dream"
-   - "información sobre ACDC" → "ACDC"
-   - "tienes la cepa Harlequin" → "Harlequin"
+   **specific_strain_names = ["Strain Name"]** if user asks about a SPECIFIC strain:
+   - "do you have info about Tropicana Cookies" → ["Tropicana Cookies"]
+   - "tell me about Northern Lights" → ["Northern Lights"]
+   - "what is Blue Dream" → ["Blue Dream"]
+   - "información sobre ACDC" → ["ACDC"]
+   - "tienes la cepa Harlequin" → ["Harlequin"]
 
-   **specific_strain_name = null** if user wants RECOMMENDATIONS/SEARCH:
+   **specific_strain_names = ["A", "B"]** for MULTIPLE specific strains:
+   - "difference between Blue Dream and Sour Diesel" → ["Blue Dream", "Sour Diesel"]
+   - "compare OG Kush and Northern Lights" → ["OG Kush", "Northern Lights"]
+
+   **specific_strain_names = null** if user wants RECOMMENDATIONS/SEARCH:
    - "suggest me indica strains" → null (searching, not specific)
    - "show me high THC strains" → null (searching)
    - "what's good for sleep" → null (recommendations)
 
    **IMPORTANT**:
-   - Extract EXACT strain name as written by user (capitalization OK)
-   - Only set if user clearly references ONE specific strain
-   - If specific strain detected, return ONLY that strain (limit=1), not similar ones
+   - Extract EXACT strain names as written by user (capitalization OK)
+   - Return as a list even for a single strain
+   - If specific strain(s) detected, return ONLY those strains, not similar ones
 
 1. **Category Detection** (for SQL pre-filtering):
    - If user mentions "indica", "sativa", or "hybrid" explicitly → return that category
@@ -629,8 +638,8 @@ Analyze the user's query and provide:
    You can set natural_response to a placeholder like "Follow-up processed".
 
 6. **Natural Response**:
-   - If is_search_query=true AND specific_strain_name is null: set natural_response to "." (single dot placeholder — it will be regenerated later with actual strain data)
-   - If is_search_query=true AND specific_strain_name is set: generate a brief description of that strain (2-3 sentences)
+   - If is_search_query=true AND specific_strain_names is null: set natural_response to "." (single dot placeholder — it will be regenerated later with actual strain data)
+   - If is_search_query=true AND specific_strain_names is set: generate a brief description of those strain(s) (2-3 sentences)
    - If is_search_query=false AND is_off_topic=false: generate helpful, friendly response in the target language (2-3 sentences)
    - If is_search_query=false AND is_off_topic=true: generate a brief cannabis-scope reminder in the target language (the system may replace it with a fixed response)
    - If is_follow_up=true: set natural_response to "Follow-up processed" (ignored by system)
@@ -666,7 +675,7 @@ RESPONSE FORMAT (JSON only):
 {{
   "is_search_query": true|false,
   "is_off_topic": true|false,
-  "specific_strain_name": "Strain Name"|null,
+  "specific_strain_names": ["Strain Name"]|null,
   "detected_category": "Indica"|"Sativa"|"Hybrid"|null,
   "thc_level": "low"|"medium"|"high"|null,
   "cbd_level": "low"|"medium"|"high"|null,
@@ -702,7 +711,7 @@ Query: "suggest me indica with tropical flavor and high thc"
 
 5. SPECIFIC STRAIN:
 Query: "tell me about Northern Lights"
-{{"is_search_query": true, "specific_strain_name": "Northern Lights", "is_follow_up": false, "natural_response": "Northern Lights is a classic indica known for its relaxing and sedating effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
+{{"is_search_query": true, "specific_strain_names": ["Northern Lights"], "is_follow_up": false, "natural_response": "Northern Lights is a classic indica known for its relaxing and sedating effects.", "suggested_follow_ups": ["Similar strains?", "Effects?"], "confidence": 0.95}}
 
 6. FOLLOW-UP (compare):
 Context: Recommended strains: Super Silver Haze (21% THC), Chocolope (22% THC)
@@ -832,12 +841,18 @@ Respond with JSON only."""
             elif isinstance(is_off_topic, str):
                 is_off_topic = is_off_topic.lower() in ["true", "yes", "1"]
 
-            # Нормализация specific strain name
-            specific_strain_name = raw_result.get("specific_strain_name")
-            if isinstance(specific_strain_name, str):
-                specific_strain_name = specific_strain_name.strip()
-                if specific_strain_name.lower() in ["null", "", "none"]:
-                    specific_strain_name = None
+            # Нормализация specific strain names (support both old str and new list format)
+            raw_strain = raw_result.get("specific_strain_names") or raw_result.get("specific_strain_name")
+            specific_strain_names = None
+            if isinstance(raw_strain, str):
+                raw_strain = raw_strain.strip()
+                if raw_strain.lower() not in ("null", "", "none"):
+                    specific_strain_names = [raw_strain]
+            elif isinstance(raw_strain, list):
+                specific_strain_names = [
+                    s.strip() for s in raw_strain
+                    if isinstance(s, str) and s.strip().lower() not in ("null", "", "none")
+                ] or None
 
             # Нормализация follow-up
             is_follow_up = raw_result.get("is_follow_up", False)
@@ -910,7 +925,7 @@ Respond with JSON only."""
                 cbd_level=cbd_level,
                 is_search_query=is_search_query,
                 is_off_topic=is_off_topic,
-                specific_strain_name=specific_strain_name,
+                specific_strain_names=specific_strain_names,
                 is_follow_up=is_follow_up,
                 follow_up_intent=follow_up_intent,
                 required_flavors=required_flavors,
