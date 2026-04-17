@@ -1,8 +1,6 @@
 services:
   api:
-    build:
-      context: .
-    image: canagent-api:latest
+    image: ${CANAGENT_API_IMAGE:-canagent-api:latest}
     container_name: canagent-api
     command: >
       uvicorn app.main:app

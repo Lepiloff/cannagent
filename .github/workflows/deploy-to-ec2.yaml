@@ -5,15 +5,23 @@ on:
     branches:
       - master
 
+concurrency:
+  group: deploy-fastapi-master
+  cancel-in-progress: true
+
 env:
   REMOTE_PROJECT_DIR: ${{ secrets.CANAGENT_REMOTE_PATH }}
   STACK_NAME: stack-fastapi
   COMPOSE_FILE: docker-compose.prod.yaml
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/canagent-api
 
 jobs:
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout code
@@ -21,44 +29,87 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect build-impacting changes
+      - name: Detect deploy-impacting changes
         id: detect_changes
         run: |
           set -euo pipefail
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+          BEFORE_SHA="${{ github.event.before }}"
+          if [ -n "${BEFORE_SHA}" ] && [ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED_FILES=$(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}")
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
             CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
           else
             CHANGED_FILES=$(git ls-tree -r --name-only HEAD)
           fi
           echo "Changed files:"
-          echo "$CHANGED_FILES"
+          printf '%s\n' "$CHANGED_FILES"
 
-          # Check for Docker/dependency changes (supports any path)
-          if echo "$CHANGED_FILES" | grep -Eq '(^|/)(Dockerfile|requirements\.txt)$'; then
-            echo "rebuild=full" >> "$GITHUB_OUTPUT"
-            echo "🔨 FULL REBUILD: Dockerfile or dependencies changed"
-          # Check for Python code changes
-          elif echo "$CHANGED_FILES" | grep -Eq '\.(py|ini)$'; then
-            echo "rebuild=quick" >> "$GITHUB_OUTPUT"
-            echo "⚡ QUICK REBUILD: Python code changed"
-          # Check for docker-compose or config changes (no rebuild needed, just restart)
-          elif echo "$CHANGED_FILES" | grep -Eq '(docker-compose\.prod\.yaml|\.env)$'; then
-            echo "rebuild=none" >> "$GITHUB_OUTPUT"
-            echo "🔄 NO REBUILD: Only runtime config changed (will restart)"
+          BUILD_IMAGE=false
+          DEPLOY_MODE=skip
+
+          if echo "$CHANGED_FILES" | grep -Eq '(^|/)(Dockerfile|requirements\.txt|alembic\.ini)$|^(app|alembic|scripts)/'; then
+            BUILD_IMAGE=true
+            DEPLOY_MODE=image
+            echo "📦 IMAGE DEPLOY: Application or image inputs changed"
+          elif echo "$CHANGED_FILES" | grep -Eq '(^|/)(docker-compose\.prod\.yaml|env\.example)$'; then
+            DEPLOY_MODE=restart
+            echo "🔄 RESTART DEPLOY: Runtime config changed"
           else
-            echo "rebuild=none" >> "$GITHUB_OUTPUT"
-            echo "✓ NO REBUILD: No build-impacting changes"
+            echo "⏭️ SKIP DEPLOY: No runtime changes detected"
           fi
 
+          echo "build_image=${BUILD_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "deploy_mode=${DEPLOY_MODE}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image references
+        id: image_refs
+        run: |
+          set -euo pipefail
+          IMAGE_REPOSITORY="${IMAGE_NAME,,}"
+          echo "image_repository=${IMAGE_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_latest=${IMAGE_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.detect_changes.outputs.build_image == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.detect_changes.outputs.build_image == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        if: steps.detect_changes.outputs.build_image == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image_refs.outputs.image_sha }}
+            ${{ steps.image_refs.outputs.image_latest }}
+          cache-from: type=gha,scope=canagent-api
+          cache-to: type=gha,mode=max,scope=canagent-api
+
       - name: Add SSH key
+        if: steps.detect_changes.outputs.deploy_mode != 'skip'
         uses: webfactory/ssh-agent@v0.8.0
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
       - name: Deploy stack-fastapi
+        if: steps.detect_changes.outputs.deploy_mode != 'skip'
         env:
           EC2_HOST: ${{ secrets.EC2_IP_ADDRESS }}
-          REBUILD_FLAG: ${{ steps.detect_changes.outputs.rebuild }}
+          DEPLOY_MODE: ${{ steps.detect_changes.outputs.deploy_mode }}
+          IMAGE_REPOSITORY: ${{ steps.image_refs.outputs.image_repository }}
+          DEPLOY_IMAGE: ${{ steps.image_refs.outputs.image_sha }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${EC2_HOST:-}" ]; then
@@ -69,16 +120,29 @@ jobs:
           REMOTE_PATH_VALUE="${REMOTE_PROJECT_DIR:-/home/ubuntu/cannagent}"
           STACK_VALUE="${STACK_NAME:-stack-fastapi}"
           COMPOSE_FILE_VALUE="${COMPOSE_FILE:-docker-compose.prod.yaml}"
-          REBUILD_VALUE="${REBUILD_FLAG:-false}"
+          DEPLOY_MODE_VALUE="${DEPLOY_MODE:-skip}"
+          IMAGE_REPOSITORY_VALUE="${IMAGE_REPOSITORY:-}"
+          DEPLOY_IMAGE_VALUE="${DEPLOY_IMAGE:-}"
+          GHCR_USERNAME_VALUE="${GHCR_USERNAME:-}"
+          GHCR_TOKEN_VALUE="${GHCR_TOKEN:-}"
 
           ssh -o StrictHostKeyChecking=no \
             -o ServerAliveInterval=60 \
             "ubuntu@${EC2_HOST}" \
-            "REMOTE_PROJECT_DIR='${REMOTE_PATH_VALUE}' STACK_NAME='${STACK_VALUE}' COMPOSE_FILE='${COMPOSE_FILE_VALUE}' REBUILD_IMAGES='${REBUILD_VALUE}' bash -s" <<'EOF'
+            "REMOTE_PROJECT_DIR='${REMOTE_PATH_VALUE}' STACK_NAME='${STACK_VALUE}' COMPOSE_FILE='${COMPOSE_FILE_VALUE}' DEPLOY_MODE='${DEPLOY_MODE_VALUE}' IMAGE_REPOSITORY='${IMAGE_REPOSITORY_VALUE}' DEPLOY_IMAGE='${DEPLOY_IMAGE_VALUE}' GHCR_USERNAME='${GHCR_USERNAME_VALUE}' GHCR_TOKEN='${GHCR_TOKEN_VALUE}' bash -s" <<'EOF'
               set -euo pipefail
               REMOTE_PATH="${REMOTE_PROJECT_DIR:-/home/ubuntu/cannagent}"
               STACK="${STACK_NAME:-stack-fastapi}"
               COMPOSE_FILE_PATH="${COMPOSE_FILE:-docker-compose.prod.yaml}"
+              DEPLOY_KIND="${DEPLOY_MODE:-skip}"
+              IMAGE_REPO="${IMAGE_REPOSITORY:-ghcr.io/example/canagent-api}"
+              if [ "${DEPLOY_KIND}" = "image" ]; then
+                IMAGE_REF="${DEPLOY_IMAGE:-${IMAGE_REPO}:latest}"
+              else
+                IMAGE_REF="${IMAGE_REPO}:latest"
+              fi
+
+              export CANAGENT_API_IMAGE="$IMAGE_REF"
 
               echo "Using remote path: $REMOTE_PATH"
               cd "$REMOTE_PATH"
@@ -132,11 +196,28 @@ jobs:
                 exit 1
               fi
 
-              echo "Stopping existing stack..."
-              # Use explicit container names since docker-compose.prod.yaml uses container_name
-              docker stop canagent-api canagent-redis >/dev/null 2>&1 || true
-              docker rm canagent-api canagent-redis >/dev/null 2>&1 || true
-              echo "✓ Old containers removed"
+              echo "Authenticating to container registry..."
+              if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+                printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+                echo "✓ Registry login succeeded"
+              else
+                echo "⚠️  Registry credentials not provided; assuming existing auth or public package"
+              fi
+
+              case "${DEPLOY_KIND}" in
+                "image")
+                  echo "📥 Pulling freshly built image: ${CANAGENT_API_IMAGE}"
+                  docker pull "${CANAGENT_API_IMAGE}"
+                  ;;
+                "restart")
+                  echo "🔄 Runtime-only deploy: reusing image ${CANAGENT_API_IMAGE}"
+                  docker image inspect "${CANAGENT_API_IMAGE}" >/dev/null 2>&1 || docker pull "${CANAGENT_API_IMAGE}"
+                  ;;
+                *)
+                  echo "No deployment required"
+                  exit 0
+                  ;;
+              esac
 
               echo "Ensuring pgvector extension is installed..."
 
@@ -149,41 +230,15 @@ jobs:
                 echo "WARNING: canna-postgres container not found; skipped pgvector initialization."
               fi
 
-              # Enable BuildKit for better caching
-              export DOCKER_BUILDKIT=1
-              export COMPOSE_DOCKER_CLI_BUILD=1
-
-              # Smart 3-tier build strategy
-              case "${REBUILD_IMAGES}" in
-                "full")
-                  echo "🔨 FULL REBUILD: Docker/dependency files changed - rebuilding with no cache..."
-                  docker compose -f "$COMPOSE_FILE_PATH" build --no-cache
-                  ;;
-                "quick")
-                  echo "⚡ QUICK REBUILD: Only code changed - using cached layers..."
-                  docker compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
-                  ;;
-                "none")
-                  echo "✓ NO REBUILD: Using existing images..."
-                  # Validate that images exist
-                  if ! docker images | grep -q "canagent-api"; then
-                    echo "⚠️  WARNING: canagent-api image not found, forcing rebuild..."
-                    docker compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
-                  else
-                    echo "✓ Existing image found, skipping build"
-                  fi
-                  ;;
-                *)
-                  echo "⚠️  Unknown rebuild mode: ${REBUILD_IMAGES}, defaulting to quick rebuild..."
-                  docker compose -f "$COMPOSE_FILE_PATH" build --build-arg BUILDKIT_INLINE_CACHE=1
-                  ;;
-              esac
-
               # Pre-deployment validation
               echo ""
               echo "=== Pre-Deployment Validation ==="
-              echo "Checking built images..."
-              docker images | grep -E "(canagent-api|redis)" || echo "⚠️  WARNING: Expected images not found"
+              echo "Checking pulled image..."
+              docker image inspect "${CANAGENT_API_IMAGE}" >/dev/null 2>&1 || {
+                echo "❌ ERROR: Expected image not available: ${CANAGENT_API_IMAGE}"
+                exit 1
+              }
+              echo "✓ Image available: ${CANAGENT_API_IMAGE}"
 
               echo ""
               echo "Checking Docker Compose configuration..."
@@ -220,6 +275,11 @@ jobs:
               fi
               echo ""
 
+              echo "Stopping existing API container before migration..."
+              docker stop canagent-api >/dev/null 2>&1 || true
+              docker rm canagent-api >/dev/null 2>&1 || true
+              echo "✓ Old API container removed"
+
               echo "=== Applying Database Migrations ==="
               # Run migrations using docker run (not docker-compose run to avoid conflicts)
               set +e  # Temporarily disable exit on error for migration block
@@ -235,7 +295,7 @@ jobs:
                 --env-file .env \
                 -e POSTGRES_HOST=canna-postgres \
                 -e REDIS_HOST=canagent-redis \
-                canagent-api:latest \
+                "${CANAGENT_API_IMAGE}" \
                 alembic -c /app/alembic.ini upgrade head > "$MIGRATION_LOG" 2>&1
               MIGRATION_EXIT_CODE=$?
               set -e  # Re-enable exit on error
