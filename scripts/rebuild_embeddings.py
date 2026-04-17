@@ -27,6 +27,11 @@ from app.core.rag_service import RAGService
 from app.core.llm_interface import get_llm
 
 
+def has_embedding(value) -> bool:
+    """Return True when an embedding vector is present without relying on array truthiness."""
+    return value is not None and len(value) > 0
+
+
 def reset_embeddings() -> None:
     """Clear all existing embeddings."""
     with engine.begin() as conn:
@@ -46,8 +51,12 @@ def get_strains_for_processing(session, only_missing: bool, limit: int | None):
 
     if only_missing:
         query = query.filter(
-            (StrainModel.embedding_en == None) | (StrainModel.embedding_es == None)
+            (StrainModel.embedding_en == None)
+            | (StrainModel.embedding_es == None)
+            | (StrainModel.active == False)
         )
+
+    query = query.order_by(StrainModel.id)
 
     if limit:
         query = query.limit(limit)
@@ -85,11 +94,26 @@ def rebuild_embeddings(only_missing: bool = True, limit: int | None = None) -> N
 
         for idx, strain in enumerate(strains, 1):
             try:
-                rag_service.add_strain_embeddings(strain.id)
+                needs_embeddings = not (
+                    has_embedding(strain.embedding_en) and has_embedding(strain.embedding_es)
+                )
+
+                if needs_embeddings:
+                    generated = rag_service.add_strain_embeddings(strain.id)
+                    if not generated:
+                        error_count += 1
+                        print(f"  Error for '{strain.name}': embedding generation returned False")
+                        continue
+                    session.refresh(strain)
+
                 success_count += 1
 
-                # Activate strain if both embeddings are now present
-                if not strain.active and strain.embedding_en and strain.embedding_es:
+                # Activate strains once both vectors exist, including already-generated ones.
+                if (
+                    not strain.active
+                    and has_embedding(strain.embedding_en)
+                    and has_embedding(strain.embedding_es)
+                ):
                     strain.active = True
                     session.commit()
                     activated_count += 1
