@@ -17,6 +17,7 @@ from app.core.taxonomy_init import initialize_taxonomy_system
 # Setup logging
 setup_logging()
 logger = logging.getLogger(__name__)
+APP_VERSION = "1.0.1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     title=os.getenv('PROJECT_NAME', 'AI Budtender'),
-    version="1.0.0",
+    version=APP_VERSION,
     description="AI Budtender - Smart assistant for cannabis product selection",
     openapi_url=f"{os.getenv('API_V1_STR', '/api/v1')}/openapi.json",
     docs_url=f"{os.getenv('API_V1_STR', '/api/v1')}/docs",
@@ -116,7 +117,7 @@ async def root():
     """Root endpoint"""
     return {
         "message": "AI Budtender API", 
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "docs": f"{api_v1_str}/docs",
         "metrics": "/metrics" if enable_metrics else None
     }
