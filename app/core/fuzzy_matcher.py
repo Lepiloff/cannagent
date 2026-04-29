@@ -109,14 +109,19 @@ class TrigramMatcher:
             return []
 
         try:
-            # PostgreSQL query using unnest for bulk similarity
-            # Note: Using CAST() instead of :: to avoid conflict with SQLAlchemy parameter syntax
+            # PostgreSQL query using unnest for bulk similarity.
+            # `lower(value)` makes the trigram comparison case-insensitive — without it
+            # similarity('sleepy', 'Sleepy') ≈ 0.4 (instead of 1.0), and downstream
+            # consumers had to rely on the threshold being permissive enough to still
+            # match. The returned `value` keeps the original DB casing so that
+            # case-sensitive consumers (none today, but the contract is preserved)
+            # see the canonical form.
             query = text("""
                 SELECT
                     value,
-                    similarity(:user_input, value) as score
+                    similarity(:user_input, lower(value)) as score
                 FROM unnest(CAST(:candidates AS text[])) as value
-                WHERE similarity(:user_input, value) > :threshold
+                WHERE similarity(:user_input, lower(value)) > :threshold
                 ORDER BY score DESC
             """)
 
