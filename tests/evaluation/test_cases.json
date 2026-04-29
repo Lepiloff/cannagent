@@ -310,6 +310,66 @@
       "tags": ["search", "cbd", "medical", "es"]
     },
     {
+      "id": "search_relaxing_not_sleepy",
+      "query": "relaxing but not sleepy",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en",
+        "excluded_feelings": ["sleepy"]
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "negation", "feelings", "en"]
+    },
+    {
+      "id": "search_focused_no_anxiety",
+      "query": "focused without anxiety",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_language": "en",
+        "exclude_negatives": ["anxiety"]
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "negation", "negatives", "en"]
+    },
+    {
+      "id": "search_indica_high_thc_not_earthy",
+      "query": "indica with high thc but not earthy",
+      "language": "en",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "detected_category": "Indica",
+        "thc_level": "high",
+        "detected_language": "en",
+        "excluded_flavors": ["earthy"]
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "negation", "flavors", "en"]
+    },
+    {
+      "id": "search_es_dormir_sin_paranoia",
+      "query": "para dormir con alto thc, sin paranoia y que no me dé hambre",
+      "language": "es",
+      "session_context": null,
+      "expected": {
+        "is_search_query": true,
+        "is_follow_up": false,
+        "thc_level": "high",
+        "detected_language": "es",
+        "exclude_negatives": ["paranoia"],
+        "excluded_feelings": ["hungry"]
+      },
+      "expected_strains": ">0",
+      "tags": ["search", "negation", "negatives", "feelings", "es"]
+    },
+    {
       "id": "non_search_weather",
       "query": "what's the weather like today?",
       "language": "en",

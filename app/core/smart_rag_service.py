@@ -497,7 +497,8 @@ class SmartRAGService:
         if analysis.is_follow_up and (
             analysis.required_effects or analysis.required_flavors
             or analysis.required_terpenes or analysis.required_helps_with
-            or analysis.exclude_negatives
+            or analysis.exclude_negatives or analysis.excluded_feelings
+            or analysis.excluded_flavors
         ):
             logger.info("🔄 Override follow-up → new search (new attributes detected)")
             analysis.is_follow_up = False
@@ -678,6 +679,7 @@ class SmartRAGService:
 
             if candidates and (analysis.required_flavors or analysis.required_effects or
                               analysis.required_helps_with or analysis.exclude_negatives or
+                              analysis.excluded_feelings or analysis.excluded_flavors or
                               analysis.required_terpenes):
                 original_count = len(candidates)
                 candidates = db_svc._apply_attribute_filters(candidates, analysis, filter_params)
@@ -730,6 +732,13 @@ class SmartRAGService:
                     query_embedding, candidates, analysis.detected_language, 5
                 )
                 logger.info(f"Vector search: {len(result_strains)} results")
+                # Defensive post-filter: drops any strain that slipped through and
+                # violates excluded_feelings/excluded_flavors (mainly when attribute
+                # SQL filter fell back). Re-fetches a wider pool to top up if needed.
+                result_strains = await db_svc._apply_soft_exclude_post_filter(
+                    result_strains, candidates, analysis,
+                    run_db, db_svc, query_embedding,
+                )
             except Exception as e:
                 logger.error(f"Async vector search failed: {e}", exc_info=True)
                 result_strains = candidates[:5]
@@ -1113,6 +1122,7 @@ class SmartRAGService:
                     candidates = filtered_query.all()
                     if candidates and (analysis.required_flavors or analysis.required_effects or
                                       analysis.required_helps_with or analysis.exclude_negatives or
+                                      analysis.excluded_feelings or analysis.excluded_flavors or
                                       analysis.required_terpenes):
                         original_count = len(candidates)
                         candidates = db_svc._apply_attribute_filters(candidates, analysis, filter_params)
@@ -1145,6 +1155,11 @@ class SmartRAGService:
                         result_strains = await run_db(
                             db_svc.vector_search._search_with_embedding,
                             query_embedding, candidates, analysis.detected_language, 5
+                        )
+                        # Defensive post-filter against excluded_feelings/excluded_flavors.
+                        result_strains = await db_svc._apply_soft_exclude_post_filter(
+                            result_strains, candidates, analysis,
+                            run_db, db_svc, query_embedding,
                         )
                     except Exception as e:
                         logger.error(f"Streaming vector search failed: {e}", exc_info=True)
@@ -1278,6 +1293,99 @@ class SmartRAGService:
             }
 
         return None
+
+    @staticmethod
+    def _violates_excludes(strain, excluded_feelings, excluded_flavors) -> bool:
+        """Return True if `strain` carries any excluded feeling/flavor.
+
+        Case-insensitive substring match (`'sleepy'` matches `'Sleepy'`), correct
+        for the canonical single-form values in feelings/flavors tables. Empty or
+        missing names on either side are skipped so they cannot trigger a false
+        positive via empty-string-substring semantics.
+        """
+        feelings_lower = [s.strip().lower() for s in (excluded_feelings or []) if s and s.strip()]
+        flavors_lower = [s.strip().lower() for s in (excluded_flavors or []) if s and s.strip()]
+
+        if feelings_lower:
+            for f in (strain.feelings or []):
+                fname = (getattr(f, "name", None) or "").strip().lower()
+                if not fname:
+                    continue
+                if any(ef in fname or fname in ef for ef in feelings_lower):
+                    return True
+        if flavors_lower:
+            for f in (strain.flavors or []):
+                fname = (getattr(f, "name", None) or "").strip().lower()
+                if not fname:
+                    continue
+                if any(ef in fname or fname in ef for ef in flavors_lower):
+                    return True
+        return False
+
+    async def _apply_soft_exclude_post_filter(
+        self,
+        result_strains: list,
+        candidates: list,
+        analysis,
+        run_db,
+        db_svc,
+        query_embedding,
+        target_count: int = 5,
+        wider_pool_size: int = 20,
+    ) -> list:
+        """Drop strains in `result_strains` that violate excluded_feelings/excluded_flavors.
+
+        If the surviving count drops below `target_count` and exclusions are present,
+        re-fetch a wider vector-search pool from `candidates`, filter again, and top up.
+        Triggers only when analysis has at least one exclusion — otherwise no-op.
+
+        This guards the result against `attribute_fallback` paths where the SQL
+        attribute filter was bypassed (filters were too strict and zeroed candidates,
+        falling back to category/THC/CBD-only). In that case vector search may surface
+        items the user explicitly negated.
+        """
+        if not analysis.excluded_feelings and not analysis.excluded_flavors:
+            return result_strains
+
+        original_count = len(result_strains)
+        cleaned = [
+            s for s in result_strains
+            if not self._violates_excludes(s, analysis.excluded_feelings, analysis.excluded_flavors)
+        ]
+        dropped = original_count - len(cleaned)
+        if dropped:
+            logger.info(f"Soft post-filter dropped {dropped}/{original_count} strain(s) violating excludes")
+
+        if len(cleaned) >= target_count or not candidates or query_embedding is None:
+            return cleaned
+
+        # Re-fetch wider pool and top up.
+        try:
+            wider = await run_db(
+                db_svc.vector_search._search_with_embedding,
+                query_embedding, candidates, analysis.detected_language, wider_pool_size,
+            )
+        except Exception as e:
+            logger.warning(f"Soft post-filter wider fetch failed: {e}")
+            return cleaned
+
+        seen_ids = {s.id for s in cleaned}
+        for s in wider:
+            if len(cleaned) >= target_count:
+                break
+            if s.id in seen_ids:
+                continue
+            if self._violates_excludes(s, analysis.excluded_feelings, analysis.excluded_flavors):
+                continue
+            cleaned.append(s)
+            seen_ids.add(s.id)
+
+        if len(cleaned) < target_count:
+            logger.info(
+                f"Soft post-filter: only {len(cleaned)} strains left after wider re-fetch "
+                f"(target={target_count}); accepting fewer rather than relax excludes"
+            )
+        return cleaned
 
     def _resolve_to_db_values(
         self,
@@ -1520,6 +1628,72 @@ class SmartRAGService:
                     candidate_ids = [s.id for s in filtered]
                     filter_params['exclude_negatives'] = resolved_negatives
                     logger.info(f"After excluding negatives: {len(filtered)} strains")
+
+        # Exclude strains whose feelings (positive effects) the user explicitly negated
+        # ("relaxing but not sleepy" -> excluded_feelings=[Sleepy]).
+        if analysis.excluded_feelings and filtered:
+            logger.info(f"Excluding feelings (user input): {analysis.excluded_feelings}")
+            resolved_excluded_feelings = self._resolve_to_db_values(
+                user_inputs=analysis.excluded_feelings,
+                taxonomy_field="feelings",
+                language=language,
+            )
+            logger.info(f"Resolved excluded feelings (DB values): {resolved_excluded_feelings}")
+
+            if resolved_excluded_feelings:
+                feelings_exclude_query = self.repository.db.query(StrainModel.id).join(
+                    StrainModel.feelings
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
+                )
+                feeling_conditions = []
+                for feeling in resolved_excluded_feelings:
+                    feeling_conditions.append(
+                        (Feeling.name_en.ilike(f"%{feeling.lower()}%")) |
+                        (Feeling.name_es.ilike(f"%{feeling.lower()}%")) |
+                        (Feeling.name.ilike(f"%{feeling.lower()}%"))
+                    )
+                if feeling_conditions:
+                    from sqlalchemy import or_
+                    feelings_exclude_query = feelings_exclude_query.filter(or_(*feeling_conditions))
+                    exclude_ids = [row[0] for row in feelings_exclude_query.distinct().all()]
+                    filtered = [s for s in filtered if s.id not in exclude_ids]
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['excluded_feelings'] = resolved_excluded_feelings
+                    logger.info(f"After excluding feelings: {len(filtered)} strains")
+
+        # Exclude strains whose flavors the user explicitly negated
+        # ("indica but not earthy" -> excluded_flavors=[earthy]).
+        if analysis.excluded_flavors and filtered:
+            logger.info(f"Excluding flavors (user input): {analysis.excluded_flavors}")
+            resolved_excluded_flavors = self._resolve_to_db_values(
+                user_inputs=analysis.excluded_flavors,
+                taxonomy_field="flavors",
+                language=language,
+            )
+            logger.info(f"Resolved excluded flavors (DB values): {resolved_excluded_flavors}")
+
+            if resolved_excluded_flavors:
+                flavors_exclude_query = self.repository.db.query(StrainModel.id).join(
+                    StrainModel.flavors
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
+                )
+                flavor_exclude_conditions = []
+                for flavor in resolved_excluded_flavors:
+                    flavor_exclude_conditions.append(
+                        (Flavor.name_en.ilike(f"%{flavor.lower()}%")) |
+                        (Flavor.name_es.ilike(f"%{flavor.lower()}%")) |
+                        (Flavor.name.ilike(f"%{flavor.lower()}%"))
+                    )
+                if flavor_exclude_conditions:
+                    from sqlalchemy import or_
+                    flavors_exclude_query = flavors_exclude_query.filter(or_(*flavor_exclude_conditions))
+                    exclude_ids = [row[0] for row in flavors_exclude_query.distinct().all()]
+                    filtered = [s for s in filtered if s.id not in exclude_ids]
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['excluded_flavors'] = resolved_excluded_flavors
+                    logger.info(f"After excluding flavors: {len(filtered)} strains")
 
         # Filter by terpenes (scientific names) - trigram fuzzy matching
         if analysis.required_terpenes and filtered:
