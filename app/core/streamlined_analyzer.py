@@ -86,6 +86,8 @@ class QueryAnalysis(BaseModel):
     required_effects: Optional[List[str]] = Field(None, description="Effects mentioned (as written): ['relaxed', 'sleepy']")
     required_helps_with: Optional[List[str]] = Field(None, description="Medical uses (as written): ['pain', 'anxiety']")
     exclude_negatives: Optional[List[str]] = Field(None, description="Side effects to avoid (as written): ['paranoia', 'anxiety']")
+    excluded_feelings: Optional[List[str]] = Field(None, description="Effects user explicitly does NOT want (negation): ['sleepy'] for 'not sleepy'")
+    excluded_flavors: Optional[List[str]] = Field(None, description="Flavors user explicitly does NOT want (negation): ['earthy'] for 'not earthy'")
     required_terpenes: Optional[List[str]] = Field(None, description="Terpenes mentioned (as written): ['myrcene', 'limonene']")
 
     natural_response: str = Field(..., description="Естественный ответ пользователю")
@@ -588,9 +590,22 @@ Analyze the user's query and provide:
    - See "Available Medical Uses" in DATABASE CONTEXT for reference
 
    **Exclude Negatives** (exclude_negatives):
-   - Extract if user wants to AVOID side effects
-   - Examples: "without paranoia" → ["paranoia"], "que no cause ansiedad" → ["anxiety"]
+   - Extract if user wants to AVOID side effects (Anxious, Paranoid, Dizzy, Headache, Dry mouth, Dry eyes)
+   - Examples: "without paranoia" → ["paranoia"], "que no cause ansiedad" → ["anxiety"], "no headaches" → ["headache"]
    - See "Available Negatives" in DATABASE CONTEXT for reference
+
+   **Excluded Feelings** (excluded_feelings):
+   - Extract effects/feelings the user EXPLICITLY does NOT want — pattern: "not X", "without X", "no X", "que no me X", "sin X" applied to a feeling
+   - Examples: "relaxing but not sleepy" → ["sleepy"], "focused without being too energetic" → ["energetic"], "que no me ponga somnoliento" → ["sleepy"]
+   - DIFFERENCE from exclude_negatives: this targets POSITIVE feelings the user wants to avoid (Sleepy, Hungry, Energetic, Talkative). exclude_negatives targets SIDE EFFECTS (Anxious, Paranoid).
+   - Do NOT extract here when user simply doesn't mention an effect — only when they EXPLICITLY negate one.
+   - See "Available Feelings" in DATABASE CONTEXT for reference
+
+   **Excluded Flavors** (excluded_flavors):
+   - Extract flavors the user EXPLICITLY does NOT want — pattern: "not X flavor", "without X taste", "no X", "sin sabor a X"
+   - Examples: "indica with high thc but not earthy" → ["earthy"], "sativa without menthol" → ["menthol"], "sin sabor a diesel" → ["diesel"]
+   - Do NOT extract here when the user simply prefers something else — only when they EXPLICITLY say no/without/not for a flavor.
+   - See "Available Flavors" in DATABASE CONTEXT for reference
 
    **Terpenes** (required_terpenes):
    - Extract ONLY if user explicitly mentions terpene names
@@ -685,6 +700,8 @@ RESPONSE FORMAT (JSON only):
   "required_effects": ["effect1"] or null,
   "required_helps_with": ["condition1"] or null,
   "exclude_negatives": ["negative1"] or null,
+  "excluded_feelings": ["feeling1"] or null,
+  "excluded_flavors": ["flavor1"] or null,
   "required_terpenes": ["terpene1"] or null,
   "natural_response": "Response text (ignored if is_follow_up=true)",
   "suggested_follow_ups": ["follow-up 1", "follow-up 2"],
@@ -907,6 +924,14 @@ Respond with JSON only."""
             if exclude_negatives and not isinstance(exclude_negatives, list):
                 exclude_negatives = None
 
+            excluded_feelings = raw_result.get("excluded_feelings")
+            if excluded_feelings and not isinstance(excluded_feelings, list):
+                excluded_feelings = None
+
+            excluded_flavors = raw_result.get("excluded_flavors")
+            if excluded_flavors and not isinstance(excluded_flavors, list):
+                excluded_flavors = None
+
             required_terpenes = raw_result.get("required_terpenes")
             if required_terpenes and not isinstance(required_terpenes, list):
                 required_terpenes = None
@@ -932,6 +957,8 @@ Respond with JSON only."""
                 required_effects=required_effects,
                 required_helps_with=required_helps_with,
                 exclude_negatives=exclude_negatives,
+                excluded_feelings=excluded_feelings,
+                excluded_flavors=excluded_flavors,
                 required_terpenes=required_terpenes,
                 natural_response=raw_response,
                 suggested_follow_ups=raw_result.get("suggested_follow_ups", []),

@@ -469,20 +469,7 @@ class SmartRAGService:
                 and session.last_search_context
                 and SmartRAGService._should_inherit_search_context(query, analysis)):
             ctx = session.last_search_context
-            if ctx.get('detected_category'):
-                analysis.detected_category = ctx['detected_category']
-            if ctx.get('required_helps_with'):
-                analysis.required_helps_with = ctx['required_helps_with']
-            if ctx.get('required_effects'):
-                analysis.required_effects = ctx['required_effects']
-            if ctx.get('required_flavors'):
-                analysis.required_flavors = ctx['required_flavors']
-            if ctx.get('required_terpenes'):
-                analysis.required_terpenes = ctx['required_terpenes']
-            if ctx.get('thc_level'):
-                analysis.thc_level = ctx['thc_level']
-            if ctx.get('cbd_level'):
-                analysis.cbd_level = ctx['cbd_level']
+            SmartRAGService._inherit_search_context_into(analysis, ctx)
             logger.info(f"🔗 Search context inherited: {ctx}")
 
         # --- Branch: follow-up (deterministic, CPU + DB for response building) ---
@@ -494,11 +481,7 @@ class SmartRAGService:
             analysis.is_follow_up = False
 
         # Override: new attributes/criteria introduced → new search, not follow-up
-        if analysis.is_follow_up and (
-            analysis.required_effects or analysis.required_flavors
-            or analysis.required_terpenes or analysis.required_helps_with
-            or analysis.exclude_negatives
-        ):
+        if analysis.is_follow_up and SmartRAGService._introduces_new_search_criteria(analysis):
             logger.info("🔄 Override follow-up → new search (new attributes detected)")
             analysis.is_follow_up = False
 
@@ -678,6 +661,7 @@ class SmartRAGService:
 
             if candidates and (analysis.required_flavors or analysis.required_effects or
                               analysis.required_helps_with or analysis.exclude_negatives or
+                              analysis.excluded_feelings or analysis.excluded_flavors or
                               analysis.required_terpenes):
                 original_count = len(candidates)
                 candidates = db_svc._apply_attribute_filters(candidates, analysis, filter_params)
@@ -730,6 +714,13 @@ class SmartRAGService:
                     query_embedding, candidates, analysis.detected_language, 5
                 )
                 logger.info(f"Vector search: {len(result_strains)} results")
+                # Defensive post-filter: drops any strain that slipped through and
+                # violates excluded_feelings/excluded_flavors (mainly when attribute
+                # SQL filter fell back). Re-fetches a wider pool to top up if needed.
+                result_strains = await db_svc._apply_soft_exclude_post_filter(
+                    result_strains, candidates, analysis,
+                    run_db, db_svc, query_embedding,
+                )
             except Exception as e:
                 logger.error(f"Async vector search failed: {e}", exc_info=True)
                 result_strains = candidates[:5]
@@ -892,20 +883,7 @@ class SmartRAGService:
                         and session.last_search_context
                         and SmartRAGService._should_inherit_search_context(query, analysis)):
                     ctx = session.last_search_context
-                    if ctx.get('detected_category'):
-                        analysis.detected_category = ctx['detected_category']
-                    if ctx.get('required_helps_with'):
-                        analysis.required_helps_with = ctx['required_helps_with']
-                    if ctx.get('required_effects'):
-                        analysis.required_effects = ctx['required_effects']
-                    if ctx.get('required_flavors'):
-                        analysis.required_flavors = ctx['required_flavors']
-                    if ctx.get('required_terpenes'):
-                        analysis.required_terpenes = ctx['required_terpenes']
-                    if ctx.get('thc_level'):
-                        analysis.thc_level = ctx['thc_level']
-                    if ctx.get('cbd_level'):
-                        analysis.cbd_level = ctx['cbd_level']
+                    SmartRAGService._inherit_search_context_into(analysis, ctx)
                     logger.info(f"🔗 Search context inherited: {ctx}")
 
                 # Follow-up branch
@@ -917,11 +895,7 @@ class SmartRAGService:
                     analysis.is_follow_up = False
 
                 # Override: new attributes/criteria introduced → new search, not follow-up
-                if analysis.is_follow_up and (
-                    analysis.required_effects or analysis.required_flavors
-                    or analysis.required_terpenes or analysis.required_helps_with
-                    or analysis.exclude_negatives
-                ):
+                if analysis.is_follow_up and SmartRAGService._introduces_new_search_criteria(analysis):
                     logger.info("🔄 Override follow-up → new search (new attributes detected)")
                     analysis.is_follow_up = False
 
@@ -1113,6 +1087,7 @@ class SmartRAGService:
                     candidates = filtered_query.all()
                     if candidates and (analysis.required_flavors or analysis.required_effects or
                                       analysis.required_helps_with or analysis.exclude_negatives or
+                                      analysis.excluded_feelings or analysis.excluded_flavors or
                                       analysis.required_terpenes):
                         original_count = len(candidates)
                         candidates = db_svc._apply_attribute_filters(candidates, analysis, filter_params)
@@ -1145,6 +1120,11 @@ class SmartRAGService:
                         result_strains = await run_db(
                             db_svc.vector_search._search_with_embedding,
                             query_embedding, candidates, analysis.detected_language, 5
+                        )
+                        # Defensive post-filter against excluded_feelings/excluded_flavors.
+                        result_strains = await db_svc._apply_soft_exclude_post_filter(
+                            result_strains, candidates, analysis,
+                            run_db, db_svc, query_embedding,
                         )
                     except Exception as e:
                         logger.error(f"Streaming vector search failed: {e}", exc_info=True)
@@ -1278,6 +1258,108 @@ class SmartRAGService:
             }
 
         return None
+
+    @staticmethod
+    def _violates_excludes(strain, excluded_feelings, excluded_flavors) -> bool:
+        """Return True if `strain` carries any excluded feeling/flavor.
+
+        Case-insensitive substring match (`'sleepy'` matches `'Sleepy'`) over all
+        localized name columns (`name`, `name_en`, `name_es`) so a Spanish-only
+        analyzer extraction (`'somnoliento'`) still matches a strain whose
+        canonical `name` is the English form. Mirrors the column set the SQL
+        attribute filter uses (`Feeling.name_en | name_es | name` ILIKE).
+        Empty or missing names on either side are skipped so they cannot trigger
+        a false positive via empty-string-substring semantics.
+        """
+        feelings_lower = [s.strip().lower() for s in (excluded_feelings or []) if s and s.strip()]
+        flavors_lower = [s.strip().lower() for s in (excluded_flavors or []) if s and s.strip()]
+
+        def _matches_any(taxonomy_item, exclude_terms_lower) -> bool:
+            for col in ("name", "name_en", "name_es"):
+                value = getattr(taxonomy_item, col, None)
+                if not value:
+                    continue
+                vlow = str(value).strip().lower()
+                if not vlow:
+                    continue
+                if any(ef in vlow or vlow in ef for ef in exclude_terms_lower):
+                    return True
+            return False
+
+        if feelings_lower:
+            for f in (strain.feelings or []):
+                if _matches_any(f, feelings_lower):
+                    return True
+        if flavors_lower:
+            for f in (strain.flavors or []):
+                if _matches_any(f, flavors_lower):
+                    return True
+        return False
+
+    async def _apply_soft_exclude_post_filter(
+        self,
+        result_strains: list,
+        candidates: list,
+        analysis,
+        run_db,
+        db_svc,
+        query_embedding,
+        target_count: int = 5,
+        wider_pool_size: int = 20,
+    ) -> list:
+        """Drop strains in `result_strains` that violate excluded_feelings/excluded_flavors.
+
+        If the surviving count drops below `target_count` and exclusions are present,
+        re-fetch a wider vector-search pool from `candidates`, filter again, and top up.
+        Triggers only when analysis has at least one exclusion — otherwise no-op.
+
+        This guards the result against `attribute_fallback` paths where the SQL
+        attribute filter was bypassed (filters were too strict and zeroed candidates,
+        falling back to category/THC/CBD-only). In that case vector search may surface
+        items the user explicitly negated.
+        """
+        if not analysis.excluded_feelings and not analysis.excluded_flavors:
+            return result_strains
+
+        original_count = len(result_strains)
+        cleaned = [
+            s for s in result_strains
+            if not self._violates_excludes(s, analysis.excluded_feelings, analysis.excluded_flavors)
+        ]
+        dropped = original_count - len(cleaned)
+        if dropped:
+            logger.info(f"Soft post-filter dropped {dropped}/{original_count} strain(s) violating excludes")
+
+        if len(cleaned) >= target_count or not candidates or query_embedding is None:
+            return cleaned
+
+        # Re-fetch wider pool and top up.
+        try:
+            wider = await run_db(
+                db_svc.vector_search._search_with_embedding,
+                query_embedding, candidates, analysis.detected_language, wider_pool_size,
+            )
+        except Exception as e:
+            logger.warning(f"Soft post-filter wider fetch failed: {e}")
+            return cleaned
+
+        seen_ids = {s.id for s in cleaned}
+        for s in wider:
+            if len(cleaned) >= target_count:
+                break
+            if s.id in seen_ids:
+                continue
+            if self._violates_excludes(s, analysis.excluded_feelings, analysis.excluded_flavors):
+                continue
+            cleaned.append(s)
+            seen_ids.add(s.id)
+
+        if len(cleaned) < target_count:
+            logger.info(
+                f"Soft post-filter: only {len(cleaned)} strains left after wider re-fetch "
+                f"(target={target_count}); accepting fewer rather than relax excludes"
+            )
+        return cleaned
 
     def _resolve_to_db_values(
         self,
@@ -1521,6 +1603,72 @@ class SmartRAGService:
                     filter_params['exclude_negatives'] = resolved_negatives
                     logger.info(f"After excluding negatives: {len(filtered)} strains")
 
+        # Exclude strains whose feelings (positive effects) the user explicitly negated
+        # ("relaxing but not sleepy" -> excluded_feelings=[Sleepy]).
+        if analysis.excluded_feelings and filtered:
+            logger.info(f"Excluding feelings (user input): {analysis.excluded_feelings}")
+            resolved_excluded_feelings = self._resolve_to_db_values(
+                user_inputs=analysis.excluded_feelings,
+                taxonomy_field="feelings",
+                language=language,
+            )
+            logger.info(f"Resolved excluded feelings (DB values): {resolved_excluded_feelings}")
+
+            if resolved_excluded_feelings:
+                feelings_exclude_query = self.repository.db.query(StrainModel.id).join(
+                    StrainModel.feelings
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
+                )
+                feeling_conditions = []
+                for feeling in resolved_excluded_feelings:
+                    feeling_conditions.append(
+                        (Feeling.name_en.ilike(f"%{feeling.lower()}%")) |
+                        (Feeling.name_es.ilike(f"%{feeling.lower()}%")) |
+                        (Feeling.name.ilike(f"%{feeling.lower()}%"))
+                    )
+                if feeling_conditions:
+                    from sqlalchemy import or_
+                    feelings_exclude_query = feelings_exclude_query.filter(or_(*feeling_conditions))
+                    exclude_ids = [row[0] for row in feelings_exclude_query.distinct().all()]
+                    filtered = [s for s in filtered if s.id not in exclude_ids]
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['excluded_feelings'] = resolved_excluded_feelings
+                    logger.info(f"After excluding feelings: {len(filtered)} strains")
+
+        # Exclude strains whose flavors the user explicitly negated
+        # ("indica but not earthy" -> excluded_flavors=[earthy]).
+        if analysis.excluded_flavors and filtered:
+            logger.info(f"Excluding flavors (user input): {analysis.excluded_flavors}")
+            resolved_excluded_flavors = self._resolve_to_db_values(
+                user_inputs=analysis.excluded_flavors,
+                taxonomy_field="flavors",
+                language=language,
+            )
+            logger.info(f"Resolved excluded flavors (DB values): {resolved_excluded_flavors}")
+
+            if resolved_excluded_flavors:
+                flavors_exclude_query = self.repository.db.query(StrainModel.id).join(
+                    StrainModel.flavors
+                ).filter(
+                    StrainModel.id.in_(candidate_ids)
+                )
+                flavor_exclude_conditions = []
+                for flavor in resolved_excluded_flavors:
+                    flavor_exclude_conditions.append(
+                        (Flavor.name_en.ilike(f"%{flavor.lower()}%")) |
+                        (Flavor.name_es.ilike(f"%{flavor.lower()}%")) |
+                        (Flavor.name.ilike(f"%{flavor.lower()}%"))
+                    )
+                if flavor_exclude_conditions:
+                    from sqlalchemy import or_
+                    flavors_exclude_query = flavors_exclude_query.filter(or_(*flavor_exclude_conditions))
+                    exclude_ids = [row[0] for row in flavors_exclude_query.distinct().all()]
+                    filtered = [s for s in filtered if s.id not in exclude_ids]
+                    candidate_ids = [s.id for s in filtered]
+                    filter_params['excluded_flavors'] = resolved_excluded_flavors
+                    logger.info(f"After excluding flavors: {len(filtered)} strains")
+
         # Filter by terpenes (scientific names) - trigram fuzzy matching
         if analysis.required_terpenes and filtered:
             logger.info(f"Filtering by terpenes (user input): {analysis.required_terpenes}")
@@ -1601,6 +1749,56 @@ class SmartRAGService:
             return []
 
     @staticmethod
+    def _introduces_new_search_criteria(analysis: QueryAnalysis) -> bool:
+        """Return True if the analyzer extracted any criterion that should make
+        the query a new search rather than a follow-up against session strains.
+
+        Single source of truth for the follow-up override gate, used by both the
+        blocking and streaming paths so they cannot drift apart.
+        """
+        return bool(
+            analysis.required_effects
+            or analysis.required_flavors
+            or analysis.required_terpenes
+            or analysis.required_helps_with
+            or analysis.exclude_negatives
+            or analysis.excluded_feelings
+            or analysis.excluded_flavors
+        )
+
+    @staticmethod
+    def _inherit_search_context_into(analysis: QueryAnalysis, ctx: Dict[str, Any]) -> None:
+        """Copy positive criteria from `ctx` into `analysis` and merge user-provided
+        excluded_* on top (without overwriting when the user explicitly set new
+        exclusions in this turn).
+
+        Used by both blocking and streaming paths so inheritance rules stay
+        symmetric. Mutates `analysis` in place.
+        """
+        if ctx.get('detected_category'):
+            analysis.detected_category = ctx['detected_category']
+        if ctx.get('required_helps_with'):
+            analysis.required_helps_with = ctx['required_helps_with']
+        if ctx.get('required_effects'):
+            analysis.required_effects = ctx['required_effects']
+        if ctx.get('required_flavors'):
+            analysis.required_flavors = ctx['required_flavors']
+        if ctx.get('required_terpenes'):
+            analysis.required_terpenes = ctx['required_terpenes']
+        # Excluded_* are preserved if the user already provided new ones this turn —
+        # otherwise inherited from session context.
+        if ctx.get('exclude_negatives') and not analysis.exclude_negatives:
+            analysis.exclude_negatives = ctx['exclude_negatives']
+        if ctx.get('excluded_feelings') and not analysis.excluded_feelings:
+            analysis.excluded_feelings = ctx['excluded_feelings']
+        if ctx.get('excluded_flavors') and not analysis.excluded_flavors:
+            analysis.excluded_flavors = ctx['excluded_flavors']
+        if ctx.get('thc_level'):
+            analysis.thc_level = ctx['thc_level']
+        if ctx.get('cbd_level'):
+            analysis.cbd_level = ctx['cbd_level']
+
+    @staticmethod
     def _should_inherit_search_context(query: str, analysis: QueryAnalysis) -> bool:
         """Return True if query is asking for more/alternative options without providing new criteria."""
         import re
@@ -1658,6 +1856,12 @@ class SmartRAGService:
                 search_ctx['required_flavors'] = analysis.required_flavors
             if analysis.required_terpenes:
                 search_ctx['required_terpenes'] = analysis.required_terpenes
+            if analysis.exclude_negatives:
+                search_ctx['exclude_negatives'] = analysis.exclude_negatives
+            if analysis.excluded_feelings:
+                search_ctx['excluded_feelings'] = analysis.excluded_feelings
+            if analysis.excluded_flavors:
+                search_ctx['excluded_flavors'] = analysis.excluded_flavors
             if analysis.thc_level:
                 search_ctx['thc_level'] = analysis.thc_level
             if analysis.cbd_level:

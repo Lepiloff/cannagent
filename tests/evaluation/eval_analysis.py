@@ -522,6 +522,18 @@ async def evaluate_case_direct(case: Dict, analyzer, system_prompt: str = "") ->
                              check_field(expected[fname], actual))
             field_results.append(fr)
 
+    # List-valued exclusion fields: case-insensitive set membership of expected items.
+    # Allows the analyzer to extract additional terms without failing the case.
+    list_exclusion_fields = ["excluded_feelings", "excluded_flavors", "exclude_negatives"]
+    for fname in list_exclusion_fields:
+        if fname in expected:
+            expected_vals = expected[fname] or []
+            actual_vals = getattr(analysis, fname, None) or []
+            actual_lower = {str(v).strip().lower() for v in actual_vals}
+            passed = all(str(e).strip().lower() in actual_lower for e in expected_vals)
+            fr = FieldResult(fname, expected_vals, list(actual_vals), passed)
+            field_results.append(fr)
+
     # specific_strain_names (supports both old "specific_strain_name" and new "specific_strain_names")
     expected_strain_names = expected.get("specific_strain_names") or (
         [expected["specific_strain_name"]] if "specific_strain_name" in expected else None

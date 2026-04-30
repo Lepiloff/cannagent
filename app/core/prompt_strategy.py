@@ -136,9 +136,22 @@ Analyze the user's query and provide:
    - See "Available Medical Uses" in DATABASE CONTEXT for reference
 
    **Exclude Negatives** (exclude_negatives):
-   - Extract if user wants to AVOID side effects
-   - Examples: "without paranoia" → ["paranoia"], "que no cause ansiedad" → ["anxiety"]
+   - Extract if user wants to AVOID SIDE EFFECTS (Anxious, Paranoid, Dizzy, Headache, Dry mouth, Dry eyes)
+   - Examples: "without paranoia" → ["paranoia"], "que no cause ansiedad" → ["anxiety"], "no headaches" → ["headache"]
    - See "Available Negatives" in DATABASE CONTEXT for reference
+
+   **Excluded Feelings** (excluded_feelings):
+   - Extract POSITIVE EFFECTS the user EXPLICITLY wants to AVOID — pattern: "not X", "without X", "no X", "que no me X", "sin X" applied to a feeling
+   - Examples: "relaxing but not sleepy" → ["sleepy"], "focused without being too energetic" → ["energetic"], "que no me ponga somnoliento" → ["sleepy"], "sin que me dé hambre" → ["hungry"]
+   - Targets feelings like Sleepy, Hungry, Energetic, Talkative, Tingly — feelings the strain MIGHT cause but user does not want.
+   - DIFFERENT from exclude_negatives: that's for negative side effects (Anxious, Paranoid). This is for unwanted positive effects.
+   - Do NOT extract here when user simply doesn't mention an effect — only when they EXPLICITLY negate one.
+
+   **Excluded Flavors** (excluded_flavors):
+   - Extract flavors the user EXPLICITLY does NOT want — pattern: "not X flavor", "without X taste", "no X", "anything but X", "sin sabor a X"
+   - Examples: "indica with high thc but not earthy" → ["earthy"], "sativa without menthol" → ["menthol"], "sin sabor a diesel" → ["diesel"], "anything but pine" → ["pine"]
+   - See "Available Flavors" in DATABASE CONTEXT for reference
+   - Do NOT extract here when the user simply prefers something else — only when they EXPLICITLY say no/without/not for a flavor.
 
    **Terpenes** (required_terpenes):
    - Extract ONLY if user explicitly mentions terpene names
@@ -233,6 +246,8 @@ RESPONSE FORMAT (JSON only):
   "required_effects": ["effect1"] or null,
   "required_helps_with": ["condition1"] or null,
   "exclude_negatives": ["negative1"] or null,
+  "excluded_feelings": ["feeling1"] or null,
+  "excluded_flavors": ["flavor1"] or null,
   "required_terpenes": ["terpene1"] or null,
   "natural_response": "Response text (ignored if is_follow_up=true)",
   "suggested_follow_ups": ["follow-up 1", "follow-up 2"],
@@ -284,6 +299,18 @@ Query: "show me something with myrcene terpene for pain"
 Context: Recommended strains: Gumbo (Indica), Bubba Kush (Indica, 18% THC)
 Query: "does that one have side effects?"
 {{"is_search_query": true, "is_follow_up": true, "follow_up_intent": {{"action": "describe"}}, "natural_response": "Follow-up processed", "suggested_follow_ups": ["Compare THC?", "Other options?"], "confidence": 0.9}}
+
+10. SEARCH with EXCLUDED FEELING (negation):
+Query: "relaxing but not sleepy"
+{{"is_search_query": true, "is_follow_up": false, "required_effects": ["relaxed"], "excluded_feelings": ["sleepy"], "natural_response": ".", "suggested_follow_ups": ["High CBD?", "Hybrid options?"], "confidence": 0.95}}
+
+11. SEARCH with EXCLUDED NEGATIVE + EXCLUDED FEELING (Spanish):
+Query: "para dormir con alto thc, sin paranoia y que no me dé hambre"
+{{"is_search_query": true, "is_follow_up": false, "thc_level": "high", "required_helps_with": ["insomnia"], "exclude_negatives": ["paranoia"], "excluded_feelings": ["hungry"], "natural_response": ".", "suggested_follow_ups": ["Indica?", "Flavor preference?"], "confidence": 0.95}}
+
+12. SEARCH with EXCLUDED FLAVOR:
+Query: "indica with high thc but not earthy"
+{{"is_search_query": true, "is_follow_up": false, "detected_category": "Indica", "thc_level": "high", "excluded_flavors": ["earthy"], "natural_response": ".", "suggested_follow_ups": ["Sweet flavors?", "Help with sleep?"], "confidence": 0.95}}
 """
 
 
@@ -313,11 +340,14 @@ RULES:
 
 **Attribute extraction** (write EXACTLY as user wrote — fuzzy SQL matching handles typos):
 - required_flavors: taste/aroma keywords mentioned
-- required_effects: feelings/effects mentioned
+- required_effects: feelings/effects mentioned (positive — what user wants)
 - required_helps_with: medical conditions/symptoms mentioned
-- exclude_negatives: side effects user wants to AVOID
+- exclude_negatives: SIDE EFFECTS user wants to AVOID (Anxious, Paranoid, Dizzy, Headache)
+- excluded_feelings: POSITIVE EFFECTS user explicitly does NOT want (negation pattern: "not X", "without X", "sin X", "que no me X" applied to a feeling like Sleepy, Hungry, Energetic). Different from exclude_negatives.
+- excluded_flavors: flavors user EXPLICITLY does NOT want ("not earthy", "without diesel", "sin sabor a X")
 - required_terpenes: terpene names explicitly mentioned
-Use DB context above for available values. Return null if not mentioned.
+Only fill excluded_* when user explicitly negates ("not", "without", "no", "sin"). Return null if not mentioned.
+Use DB context above for available values.
 
 **is_follow_up**: true ONLY if previous strains exist AND user operates on them (compare/filter/sort/select) with NO new search criteria. false if user introduces ANY new criteria or requests new search.
 
@@ -338,11 +368,13 @@ Use DB context above for available values. Return null if not mentioned.
 **suggested_follow_ups**: 2-3 contextual follow-up questions in target language.
 
 RESPONSE FORMAT (JSON only, no markdown):
-{{"is_search_query":true|false,"is_off_topic":true|false,"specific_strain_names":["Name"]|null,"detected_category":"Indica"|"Sativa"|"Hybrid"|null,"thc_level":"low"|"medium"|"high"|null,"cbd_level":"low"|"medium"|"high"|null,"is_follow_up":true|false,"follow_up_intent":{{"action":"...","field":null,"order":null,"filter_value":null,"strain_indices":null}}|null,"required_flavors":[]|null,"required_effects":[]|null,"required_helps_with":[]|null,"exclude_negatives":[]|null,"required_terpenes":[]|null,"natural_response":"...","suggested_follow_ups":["...","..."],"confidence":0.9}}
+{{"is_search_query":true|false,"is_off_topic":true|false,"specific_strain_names":["Name"]|null,"detected_category":"Indica"|"Sativa"|"Hybrid"|null,"thc_level":"low"|"medium"|"high"|null,"cbd_level":"low"|"medium"|"high"|null,"is_follow_up":true|false,"follow_up_intent":{{"action":"...","field":null,"order":null,"filter_value":null,"strain_indices":null}}|null,"required_flavors":[]|null,"required_effects":[]|null,"required_helps_with":[]|null,"exclude_negatives":[]|null,"excluded_feelings":[]|null,"excluded_flavors":[]|null,"required_terpenes":[]|null,"natural_response":"...","suggested_follow_ups":["...","..."],"confidence":0.9}}
 
 EXAMPLES:
 Search: "indica high thc for sleep" → {{"is_search_query":true,"is_off_topic":false,"detected_category":"Indica","thc_level":"high","required_helps_with":["insomnia"],"natural_response":".","suggested_follow_ups":["CBD options?","Specific flavor?"],"confidence":0.95}}
 Non-search: "hola" → {{"is_search_query":false,"is_off_topic":false,"natural_response":"¡Hola! Soy tu budtender virtual. ¿Qué tipo de cepa buscas?","suggested_follow_ups":["Para relajar","Para dormir"],"confidence":0.99}}
 Off-topic: "tell me a joke" → {{"is_search_query":false,"is_off_topic":true,"natural_response":"Solo puedo ayudar con temas relacionados con cannabis, cepas, efectos y terpenos.","suggested_follow_ups":["Para dormir","Para relajarte"],"confidence":0.98}}
 Follow-up: context has strains, query "which has most THC" → {{"is_search_query":true,"is_off_topic":false,"is_follow_up":true,"follow_up_intent":{{"action":"compare","field":"thc","order":"desc"}},"natural_response":"Follow-up processed","suggested_follow_ups":["CBD?","Effects?"],"confidence":0.95}}
+Negation feeling: "relaxing but not sleepy" → {{"is_search_query":true,"is_off_topic":false,"required_effects":["relaxed"],"excluded_feelings":["sleepy"],"natural_response":".","suggested_follow_ups":["High CBD?","Hybrid options?"],"confidence":0.95}}
+Negation flavor (es): "indica con alto thc sin sabor a tierra" → {{"is_search_query":true,"is_off_topic":false,"detected_category":"Indica","thc_level":"high","excluded_flavors":["earthy"],"natural_response":".","suggested_follow_ups":["¿Frutal?","¿Para dormir?"],"confidence":0.95}}
 """

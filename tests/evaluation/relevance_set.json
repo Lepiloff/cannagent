@@ -1,0 +1,191 @@
+{
+  "version": "0.1",
+  "description": "Relevance ground truth for reranker benchmark. Phase 3: user fills `expected_top3_names` based on manual review of current system top-10 + domain expertise. Strain names must match `Strain.name` rows in DB exactly (case-insensitive).",
+  "instructions": [
+    "1. Run each query against the current system (RERANKER_PROVIDER=noop) to see baseline top-10.",
+    "2. For each case, pick 3 strains that you (as domain expert) consider the most relevant.",
+    "3. Replace 'TODO' placeholders with real strain names.",
+    "4. If a case is impossible to ground-truth fairly (no good answer exists in DB), set 'expected_top3_names' to [] and add 'skip': true."
+  ],
+  "cases": [
+    {
+      "id": "multi_attr_indica_tropical_high_thc",
+      "query": "indica with tropical flavor and high thc",
+      "language": "en",
+      "expected_top3_names": [
+        "Forbidden Fruit",
+        "Watermelon Zkittlez"
+      ],
+      "tags": [
+        "multi_attribute",
+        "en",
+        "flavor"
+      ]
+    },
+    {
+      "id": "multi_attr_sativa_creativity_focus",
+      "query": "sativa for creativity and focus",
+      "language": "en",
+      "expected_top3_names": [
+        "Green Crack",
+        "Ghost Train Haze",
+        "Tropicana Cookies"
+      ],
+      "tags": [
+        "multi_attribute",
+        "en",
+        "effects"
+      ]
+    },
+    {
+      "id": "multi_attr_high_cbd_anxiety",
+      "query": "high CBD strain for anxiety with citrus flavor",
+      "language": "en",
+      "expected_top3_names": [
+        "Harlequin",
+        "ACDC"
+      ],
+      "tags": [
+        "multi_attribute",
+        "en",
+        "medical",
+        "flavor"
+      ]
+    },
+    {
+      "id": "multi_attr_pain_relief_no_sedation",
+      "query": "pain relief without heavy sedation",
+      "language": "en",
+      "expected_top3_names": [
+        "Dolato",
+        "Purple Punch",
+        "Dosidos"
+      ],
+      "tags": [
+        "multi_attribute",
+        "en",
+        "medical",
+        "negation"
+      ]
+    },
+    {
+      "id": "es_indica_dormir_alto_thc",
+      "query": "dame algo relajado para dormir con alto thc",
+      "language": "es",
+      "expected_top3_names": [
+        "Dolato",
+        "Dosidos",
+        "Truffle"
+      ],
+      "tags": [
+        "multi_attribute",
+        "es",
+        "medical"
+      ]
+    },
+    {
+      "id": "es_sativa_energetica_citrico",
+      "query": "sativa energética con sabor cítrico",
+      "language": "es",
+      "expected_top3_names": [
+        "Lemon Haze",
+        "Super Lemon Haze",
+        "Tangie"
+      ],
+      "tags": [
+        "multi_attribute",
+        "es",
+        "flavor"
+      ]
+    },
+    {
+      "id": "es_alivio_dolor_cronico",
+      "query": "necesito alivio para dolor crónico sin paranoia",
+      "language": "es",
+      "expected_top3_names": [
+        "Alien OG",
+        "Papaya",
+        "Platinum OG"
+      ],
+      "tags": [
+        "multi_attribute",
+        "es",
+        "medical",
+        "negation"
+      ]
+    },
+    {
+      "id": "semantic_relax_after_work",
+      "query": "I want something to relax after work",
+      "language": "en",
+      "expected_top3_names": [
+        "Watermelon",
+        "Dolato",
+        "Gumbo"
+      ],
+      "tags": [
+        "semantic",
+        "en"
+      ]
+    },
+    {
+      "id": "semantic_beginner_mild",
+      "query": "I'm a beginner, something mild please",
+      "language": "en",
+      "expected_top3_names": [
+        "Mochi",
+        "ACDC"
+      ],
+      "tags": [
+        "semantic",
+        "en",
+        "thc"
+      ]
+    },
+    {
+      "id": "semantic_evening_unwind",
+      "query": "evening strain to unwind without feeling foggy tomorrow",
+      "language": "en",
+      "expected_top3_names": [
+        "Northern Lights",
+        "Mendo Breath",
+        "Dosidos"
+      ],
+      "tags": [
+        "semantic",
+        "en",
+        "negation"
+      ]
+    },
+    {
+      "id": "negation_relaxing_not_sleepy",
+      "query": "relaxing but not sleepy",
+      "language": "en",
+      "expected_top3_names": [
+        "Dosidos",
+        "Dolato",
+        "Zkittlez"
+      ],
+      "tags": [
+        "negation",
+        "en",
+        "effects"
+      ]
+    },
+    {
+      "id": "negation_focused_no_anxiety",
+      "query": "focused without anxiety",
+      "language": "en",
+      "expected_top3_names": [
+        "Pancakes",
+        "ACDC",
+        "Green Crack"
+      ],
+      "tags": [
+        "negation",
+        "en",
+        "effects"
+      ]
+    }
+  ]
+}
