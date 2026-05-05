@@ -1682,20 +1682,27 @@ class SmartRAGService:
             logger.info(f"Resolved terpenes (DB values): {resolved_terpenes}")
 
             if resolved_terpenes:
-                terpenes_query = self.repository.db.query(StrainModel).join(
-                    StrainModel.terpenes
-                ).filter(
-                    StrainModel.id.in_(candidate_ids)
-                )
-
                 terpene_conditions = []
                 for terpene in resolved_terpenes:
                     terpene_conditions.append(Terpene.name.ilike(f"%{terpene.lower()}%"))
 
                 if terpene_conditions:
                     from sqlalchemy import or_
-                    terpenes_query = terpenes_query.filter(or_(*terpene_conditions))
-                    filtered = terpenes_query.distinct().all()
+                    dominant_ids_query = self.repository.db.query(StrainModel.id).join(
+                        StrainModel.dominant_terpene
+                    ).filter(
+                        StrainModel.id.in_(candidate_ids),
+                        or_(*terpene_conditions),
+                    )
+                    other_ids_query = self.repository.db.query(StrainModel.id).join(
+                        StrainModel.other_terpenes
+                    ).filter(
+                        StrainModel.id.in_(candidate_ids),
+                        or_(*terpene_conditions),
+                    )
+                    terpene_ids = {row[0] for row in dominant_ids_query.distinct().all()}
+                    terpene_ids.update(row[0] for row in other_ids_query.distinct().all())
+                    filtered = [s for s in filtered if s.id in terpene_ids]
                     candidate_ids = [s.id for s in filtered]
                     filter_params['terpenes'] = resolved_terpenes
                     logger.info(f"After terpenes filter: {len(filtered)} strains")

@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_
 from typing import List, Optional, Dict, Any
 from app.models.database import (
     Strain as StrainModel, 
@@ -8,6 +9,7 @@ from app.models.database import (
     Flavor, 
     Terpene
 )
+from app.core.taxonomy_aliases import canonical_taxonomy_name
 from pgvector.sqlalchemy import Vector
 
 
@@ -48,7 +50,8 @@ class StrainRepository:
             .options(joinedload(StrainModel.helps_with))
             .options(joinedload(StrainModel.negatives))
             .options(joinedload(StrainModel.flavors))
-            .options(joinedload(StrainModel.terpenes))
+            .options(joinedload(StrainModel.dominant_terpene))
+            .options(joinedload(StrainModel.other_terpenes))
             .filter(StrainModel.id == strain_id)
             .first()
         )
@@ -61,7 +64,8 @@ class StrainRepository:
             .options(joinedload(StrainModel.helps_with))
             .options(joinedload(StrainModel.negatives))
             .options(joinedload(StrainModel.flavors))
-            .options(joinedload(StrainModel.terpenes))  # STAGE 2: Include terpenes
+            .options(joinedload(StrainModel.dominant_terpene))
+            .options(joinedload(StrainModel.other_terpenes))  # STAGE 2: Include terpenes
             .filter(StrainModel.active == True)
             .offset(skip)
             .limit(limit)
@@ -87,9 +91,10 @@ class StrainRepository:
     
     def create_or_get_feeling(self, name: str, energy_type: str) -> Feeling:
         """Create or get existing feeling"""
-        feeling = self.db.query(Feeling).filter(Feeling.name == name).first()
+        canonical_name = canonical_taxonomy_name("Feeling", name)
+        feeling = self._get_taxonomy_by_name(Feeling, canonical_name)
         if not feeling:
-            feeling = Feeling(name=name, energy_type=energy_type)
+            feeling = Feeling(name=canonical_name, energy_type=energy_type)
             self.db.add(feeling)
             self.db.commit()
             self.db.refresh(feeling)
@@ -97,13 +102,25 @@ class StrainRepository:
     
     def create_or_get_helps_with(self, name: str) -> HelpsWith:
         """Create or get existing helps_with condition"""
-        condition = self.db.query(HelpsWith).filter(HelpsWith.name == name).first()
+        canonical_name = canonical_taxonomy_name("HelpsWith", name)
+        condition = self._get_taxonomy_by_name(HelpsWith, canonical_name)
         if not condition:
-            condition = HelpsWith(name=name)
+            condition = HelpsWith(name=canonical_name)
             self.db.add(condition)
             self.db.commit()
             self.db.refresh(condition)
         return condition
+
+    def _get_taxonomy_by_name(self, model, name: str):
+        """Find taxonomy row by canonical, English, or Spanish name case-insensitively."""
+        canonical_name = canonical_taxonomy_name(model.__name__, name)
+        normalized = canonical_name.lower()
+        conditions = [func.lower(model.name) == normalized]
+        if hasattr(model, "name_en"):
+            conditions.append(func.lower(model.name_en) == normalized)
+        if hasattr(model, "name_es"):
+            conditions.append(func.lower(model.name_es) == normalized)
+        return self.db.query(model).filter(or_(*conditions)).first()
     
     def create_strain(self, strain_data: dict, embedding: Optional[List[float]] = None) -> StrainModel:
         """Создание нового штамма с эмбеддингом"""
@@ -146,7 +163,7 @@ class StrainRepository:
             strain.feelings.clear()
             for feeling_name in feelings:
                 # Try to get existing feeling (seeded from migration), or create with default energy_type
-                feeling = self.db.query(Feeling).filter(Feeling.name == feeling_name).first()
+                feeling = self._get_taxonomy_by_name(Feeling, feeling_name)
                 if not feeling:
                     # Default to 'neutral' for new feelings (most should exist from migration seed data)
                     feeling = self.create_or_get_feeling(feeling_name, 'neutral')
@@ -163,9 +180,10 @@ class StrainRepository:
         if negatives:
             strain.negatives.clear()
             for negative_name in negatives:
-                negative = self.db.query(Negative).filter(Negative.name == negative_name).first()
+                canonical_name = canonical_taxonomy_name("Negative", negative_name)
+                negative = self._get_taxonomy_by_name(Negative, canonical_name)
                 if not negative:
-                    negative = Negative(name=negative_name)
+                    negative = Negative(name=canonical_name)
                     self.db.add(negative)
                     self.db.commit()
                     self.db.refresh(negative)
@@ -175,9 +193,10 @@ class StrainRepository:
         if flavors:
             strain.flavors.clear()
             for flavor_name in flavors:
-                flavor = self.db.query(Flavor).filter(Flavor.name == flavor_name).first()
+                canonical_name = canonical_taxonomy_name("Flavor", flavor_name)
+                flavor = self._get_taxonomy_by_name(Flavor, canonical_name)
                 if not flavor:
-                    flavor = Flavor(name=flavor_name)
+                    flavor = Flavor(name=canonical_name)
                     self.db.add(flavor)
                     self.db.commit()
                     self.db.refresh(flavor)
@@ -185,15 +204,21 @@ class StrainRepository:
 
         # Update terpenes
         if terpenes:
-            strain.terpenes.clear()
+            strain.dominant_terpene = None
+            strain.other_terpenes.clear()
+            resolved_terpenes = []
             for terpene_name in terpenes:
-                terpene = self.db.query(Terpene).filter(Terpene.name == terpene_name).first()
+                canonical_name = canonical_taxonomy_name("Terpene", terpene_name)
+                terpene = self._get_taxonomy_by_name(Terpene, canonical_name)
                 if not terpene:
-                    terpene = Terpene(name=terpene_name)
-                    self.db.add(terpene)
-                    self.db.commit()
-                    self.db.refresh(terpene)
-                strain.terpenes.append(terpene)
+                    # Terpenes are a fixed canna taxonomy with required metadata.
+                    # Do not create partial rows from imported/free-form values.
+                    continue
+                if terpene not in resolved_terpenes:
+                    resolved_terpenes.append(terpene)
+            if resolved_terpenes:
+                strain.dominant_terpene = resolved_terpenes[0]
+                strain.other_terpenes.extend(resolved_terpenes[1:])
 
         self.db.commit()
         self.db.refresh(strain)
