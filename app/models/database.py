@@ -40,13 +40,12 @@ strain_flavors_table = Table(
     Column('flavor_id', Integer, ForeignKey('strains_flavor.id', ondelete='CASCADE'))
 )
 
-strain_terpenes_table = Table(
-    'strains_strain_terpenes',  # Django M2M table
+strain_other_terpenes_table = Table(
+    'strains_strain_other_terpenes',  # Django M2M table
     Base.metadata,
     Column('id', Integer, primary_key=True),
     Column('strain_id', Integer, ForeignKey('strains_strain.id', ondelete='CASCADE')),
-    Column('terpene_id', Integer, ForeignKey('strains_terpene.id', ondelete='CASCADE')),
-    Column('is_dominant', Boolean, default=False)
+    Column('terpene_id', Integer, ForeignKey('strains_terpene.id', ondelete='CASCADE'))
 )
 
 
@@ -81,6 +80,7 @@ class Strain(Base):
     # Rating and category
     rating = Column(Numeric(3, 1), nullable=True)
     category = Column(String(10), nullable=True)  # Hybrid, Sativa, Indica
+    dominant_terpene_id = Column(Integer, ForeignKey('strains_terpene.id', ondelete='SET NULL'), nullable=True)
 
     # Image fields
     img = Column(String(255), nullable=True)  # Image path
@@ -108,7 +108,31 @@ class Strain(Base):
     helps_with = relationship('HelpsWith', secondary=strain_helps_with_table, back_populates='strains')
     negatives = relationship('Negative', secondary=strain_negatives_table, back_populates='strains')
     flavors = relationship('Flavor', secondary=strain_flavors_table, back_populates='strains')
-    terpenes = relationship('Terpene', secondary=strain_terpenes_table, back_populates='strains')
+    dominant_terpene = relationship(
+        'Terpene',
+        foreign_keys=[dominant_terpene_id],
+        back_populates='dominant_in_strains',
+    )
+    other_terpenes = relationship(
+        'Terpene',
+        secondary=strain_other_terpenes_table,
+        back_populates='in_strains',
+    )
+
+    @property
+    def terpenes(self):
+        """Combined terpene list matching the API's legacy response shape."""
+        combined = []
+        seen_ids = set()
+        for terpene in [self.dominant_terpene] + list(self.other_terpenes or []):
+            if not terpene:
+                continue
+            marker = terpene.id if terpene.id is not None else id(terpene)
+            if marker in seen_ids:
+                continue
+            seen_ids.add(marker)
+            combined.append(terpene)
+        return combined
     
     def __repr__(self):
         return f"<Strain(id={self.id}, name='{self.name}', category='{self.category}')>"
@@ -217,7 +241,29 @@ class Terpene(Base):
     translation_status = Column(String(50), nullable=False)  # Required in cannamente
 
     # Relationships
-    strains = relationship('Strain', secondary=strain_terpenes_table, back_populates='terpenes')
+    dominant_in_strains = relationship(
+        'Strain',
+        foreign_keys='Strain.dominant_terpene_id',
+        back_populates='dominant_terpene',
+    )
+    in_strains = relationship(
+        'Strain',
+        secondary=strain_other_terpenes_table,
+        back_populates='other_terpenes',
+    )
+
+    @property
+    def strains(self):
+        """Combined strain list for callers that still expect Terpene.strains."""
+        combined = []
+        seen_ids = set()
+        for strain in list(self.dominant_in_strains or []) + list(self.in_strains or []):
+            marker = strain.id if strain.id is not None else id(strain)
+            if marker in seen_ids:
+                continue
+            seen_ids.add(marker)
+            combined.append(strain)
+        return combined
 
     def __repr__(self):
         return f"<Terpene(id={self.id}, name='{self.name}')>" 
